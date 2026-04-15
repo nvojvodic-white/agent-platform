@@ -2,6 +2,42 @@
 
 A self-hosted platform for running and observing Claude-powered AI agents. Built with FastAPI, deployed on Kubernetes via Helm, with full observability through OpenTelemetry, Jaeger, Prometheus, and Grafana.
 
+## What this demonstrates
+
+This project is a portfolio demonstration of production-grade platform engineering applied to an agentic AI workload.
+
+**Infrastructure ownership**
+- Kubernetes deployment via Helm with HPA (2→5 replicas), NetworkPolicy (default-deny), resource limits, and liveness/readiness probes
+- One-command cluster provisioning and deployment via `deploy.sh` using kind
+- IaC-first approach — all config in code, nothing applied manually
+
+**Agentic AI platform design**
+- Multi-turn Claude agent loop with native tool use (code execution, file I/O, web search stub)
+- Every agent step — LLM calls, tool invocations, token usage — captured as OpenTelemetry spans
+- Async session execution with background task queue; API returns immediately with session ID
+
+**Observability**
+- Distributed tracing: session → LLM call → tool call spans visible in Jaeger
+- Prometheus metrics: session counters, tool call rates, p95 duration histograms, active session gauge
+- Grafana dashboard provisioned as code via Helm values
+
+**CI/CD**
+- Three GitHub Actions workflows: Python + frontend lint/typecheck, Docker build + Trivy security scan (blocks on CRITICAL/HIGH), Helm lint + dry-run validation on every PR
+
+## Screenshots
+
+**Agent running — live tool call inspector**
+![Agent running](docs/screenshot-prompt.png)
+
+**Agent completed — tool call input/output + result**
+![Agent result](docs/screenshot-prompt-result.png)
+
+**Jaeger — distributed trace waterfall (session → llm_call → tool_call spans)**
+![Jaeger traces](docs/screenshot-jaeger.png)
+
+**Grafana — sessions, tool call rates, p95 duration, completion rate**
+![Grafana dashboard](docs/screenshot-grafana.png)
+
 ## Architecture
 
 ```

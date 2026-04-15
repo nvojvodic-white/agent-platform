@@ -1,7 +1,7 @@
 export interface ToolCall {
-  name: string
+  tool: string
   input: Record<string, unknown>
-  output?: string
+  result: string
 }
 
 export interface AgentSession {
