@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { getSession } from '../api'
 import type { AgentSession } from '../types'
 
@@ -6,29 +6,15 @@ const POLL_MS = 2000
 
 export function useSession(id: string | null) {
   const [session, setSession] = useState<AgentSession | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const fetchOnce = useCallback(async () => {
-    if (!id) return null
-    try {
-      return await getSession(id)
-    } catch {
-      return null
-    }
-  }, [id])
 
   useEffect(() => {
     if (!id) return
 
     let cancelled = false
 
-    setLoading(true)
-    fetchOnce().then(data => {
-      if (!cancelled) {
-        setSession(data)
-        setLoading(false)
-      }
-    })
+    getSession(id)
+      .then(data => { if (!cancelled) setSession(data) })
+      .catch(() => null)
 
     const interval = setInterval(async () => {
       const data = await getSession(id).catch(() => null)
@@ -42,10 +28,10 @@ export function useSession(id: string | null) {
       cancelled = true
       clearInterval(interval)
     }
-  }, [id, fetchOnce])
+  }, [id])
 
-  // Reset session when id becomes null
-  const derivedSession = id ? session : null
-
-  return { session: derivedSession, loading }
+  return {
+    session: id ? session : null,
+    loading: id !== null && session === null,
+  }
 }
