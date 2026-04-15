@@ -1,0 +1,21 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+
+# Helm
+charts/agent-platform/charts/
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
