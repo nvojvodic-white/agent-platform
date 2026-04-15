@@ -5,7 +5,11 @@ WORKDIR /app
 # Upgrade OS packages to pull in security fixes (e.g. OpenSSL CVE-2026-28390)
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies first (layer caching)
+# Upgrade pip toolchain first so Trivy sees patched versions
+# (wheel/setuptools from the base image are older than our pinned versions)
+RUN pip install --no-cache-dir "wheel>=0.46.2" "setuptools>=78.0.0"
+
+# Install dependencies (layer caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
