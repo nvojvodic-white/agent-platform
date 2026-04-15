@@ -23,15 +23,17 @@ A self-hosted platform for running and observing Claude-powered AI agents. Built
 └─────────────────────────────────────────────────────┘
 ```
 
-**Stack:** FastAPI · Anthropic Claude SDK · OpenTelemetry · Jaeger · Prometheus · Grafana · Docker · Kubernetes (kind) · Helm
+**Stack:** FastAPI · Anthropic Claude SDK · React · Vite · TypeScript · OpenTelemetry · Jaeger · Prometheus · Grafana · Docker · Kubernetes (kind) · Helm
 
 ## Features
 
+- **React UI** — session list with status indicators, task input, tool call inspector, live polling while agent runs
 - **Agent sessions** — submit a task, get back a session ID; agent runs asynchronously with full tool-use support
 - **Distributed tracing** — every request and agent turn traced via OTLP → Jaeger
 - **Prometheus metrics** — sessions created counter exposed at `/metrics`
 - **Kubernetes-native** — Helm chart with HPA, NetworkPolicy, resource limits, liveness/readiness probes
 - **One-command deploy** — `./deploy.sh` creates the kind cluster, builds the image, and installs the Helm release
+- **CI/CD** — GitHub Actions for lint/test, Docker build + Trivy security scan, and Helm dry-run validation
 
 ## API
 
@@ -72,6 +74,14 @@ cp .env.example .env
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
+```
+
+### Frontend (React UI)
+
+```bash
+cd frontend
+npm install
+npm run dev   # http://localhost:5173 — proxies /api to port 8000
 ```
 
 ### Docker Compose (full stack)
@@ -157,6 +167,16 @@ agent-platform/
 │   │   ├── tracing.py          # OTLP tracing setup
 │   │   └── metrics.py          # Prometheus metrics
 │   └── main.py                 # App entrypoint
+├── frontend/                   # React + Vite + TypeScript UI
+│   └── src/
+│       ├── api.ts              # Fetch wrappers
+│       ├── types.ts            # AgentSession, ToolCall types
+│       ├── hooks/              # useSessions, useSession (polling)
+│       └── components/         # SessionList, SessionDetail, StatusBadge, NewSessionForm
+├── .github/workflows/
+│   ├── ci.yml                  # Python lint/test + frontend lint + typecheck
+│   ├── docker.yml              # Docker build + Trivy CRITICAL/HIGH scan
+│   └── helm.yml                # Helm lint + template dry-run + kubeval
 ├── charts/agent-platform/      # Helm chart
 ├── k8s/manifests/              # Raw Kubernetes manifests
 ├── kind-config.yaml            # kind cluster definition
