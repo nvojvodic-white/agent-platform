@@ -8,13 +8,19 @@ This project is a portfolio demonstration of production-grade platform engineeri
 
 **Infrastructure ownership**
 - Kubernetes deployment via Helm with HPA (2→5 replicas), NetworkPolicy (default-deny), resource limits, and liveness/readiness probes
+- Multi-environment config: `values-staging.yaml` / `values-prod.yaml` with env-appropriate replicas, resource limits, and persistence sizes
 - One-command cluster provisioning and deployment via `deploy.sh` using kind
 - IaC-first approach — all config in code, nothing applied manually
 
 **Agentic AI platform design**
-- Multi-turn Claude agent loop with native tool use (code execution, file I/O, web search stub)
+- Multi-turn Claude agent loop with native tool use: real web search (Tavily), code execution, file I/O
 - Every agent step — LLM calls, tool invocations, token usage — captured as OpenTelemetry spans
 - Async session execution with background task queue; API returns immediately with session ID
+- SQLite-backed session persistence — sessions survive pod restarts, mounted via PVC in Kubernetes
+
+**Security**
+- API key middleware (`X-API-Key` header) guards all `/api/*` routes; health and metrics endpoints exempt
+- Trivy security scan in CI blocks on CRITICAL/HIGH CVEs
 
 **Observability**
 - Distributed tracing: session → LLM call → tool call spans visible in Jaeger
@@ -54,7 +60,7 @@ flowchart LR
 
     Anthropic["Anthropic API\n(Claude)"]
 
-    User -->|HTTP| API
+    User -->|HTTP + X-API-Key| API
     API -->|OTLP/gRPC| Jaeger
     API -->|scrape| Prometheus
     Prometheus -->|datasource| Grafana
@@ -66,12 +72,14 @@ flowchart LR
 ## Features
 
 - **React UI** — session list with status indicators, task input, tool call inspector, live polling while agent runs
-- **Agent sessions** — submit a task, get back a session ID; agent runs asynchronously with full tool-use support
+- **Real web search** — Tavily API integration; set `TAVILY_API_KEY` to activate
+- **SQLite persistence** — sessions survive restarts; data volume mounted via Docker/Kubernetes
+- **API key auth** — `X-API-Key` middleware; disabled when `PLATFORM_API_KEY` is unset (local dev friendly)
 - **Distributed tracing** — every request and agent turn traced via OTLP → Jaeger
-- **Prometheus metrics** — sessions created counter exposed at `/metrics`
-- **Kubernetes-native** — Helm chart with HPA, NetworkPolicy, resource limits, liveness/readiness probes
-- **One-command deploy** — `./deploy.sh` creates the kind cluster, builds the image, and installs the Helm release
-- **CI/CD** — GitHub Actions for lint/test, Docker build + Trivy security scan, and Helm dry-run validation
+- **Prometheus metrics** — sessions created, tool call rates, p95 duration, active session gauge
+- **Kubernetes-native** — Helm chart with HPA, NetworkPolicy, PVC, resource limits, health probes
+- **Multi-environment** — `values-staging.yaml` / `values-prod.yaml` with per-env resource and scaling config
+- **CI/CD** — GitHub Actions for lint/test, Docker build + Trivy security scan, Helm dry-run validation
 
 ## API
 
@@ -81,8 +89,8 @@ flowchart LR
 | `GET` | `/api/v1/sessions` | List all sessions |
 | `GET` | `/api/v1/sessions/{id}` | Get session by ID |
 | `DELETE` | `/api/v1/sessions/{id}` | Delete a session |
-| `GET` | `/health` | Liveness check |
-| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/health` | Liveness check (auth exempt) |
+| `GET` | `/metrics` | Prometheus metrics (auth exempt) |
 
 ### Example
 
@@ -90,10 +98,11 @@ flowchart LR
 # Create a session
 curl -X POST http://localhost:8000/api/v1/sessions \
   -H "Content-Type: application/json" \
-  -d '{"task": "What is the current date and summarise the last 3 months of AI news?"}'
+  -H "X-API-Key: your-key" \
+  -d '{"task": "Search the web for the latest Claude model releases and summarise them."}'
 
 # Poll for result
-curl http://localhost:8000/api/v1/sessions/<session_id>
+curl -H "X-API-Key: your-key" http://localhost:8000/api/v1/sessions/<session_id>
 ```
 
 ## Local Development
@@ -107,7 +116,9 @@ curl http://localhost:8000/api/v1/sessions/<session_id>
 
 ```bash
 cp .env.example .env
-# Add your ANTHROPIC_API_KEY to .env
+# Set ANTHROPIC_API_KEY in .env
+# Optionally set TAVILY_API_KEY for real web search
+# Optionally set PLATFORM_API_KEY to enable API auth
 
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
@@ -128,14 +139,14 @@ npm run dev   # http://localhost:5173 — proxies /api to port 8000
 docker compose up --build
 ```
 
-This starts the API alongside Jaeger, Prometheus, and Grafana.
+Sessions are persisted to a named Docker volume (`agent-data`). All four services start together:
 
 | Service | URL |
 |---------|-----|
 | API | http://localhost:8000 |
 | Jaeger UI | http://localhost:16686 |
 | Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000 |
+| Grafana | http://localhost:3000 (admin / admin123) |
 
 ## Kubernetes Deployment
 
@@ -151,45 +162,38 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-The script will:
-1. Create a local kind cluster with port mappings
-2. Build and load the Docker image into the cluster
-3. Apply the `agent-platform` namespace
-4. Run `helm dependency update` + `helm upgrade --install`
+### Multi-environment
+
+```bash
+# Staging — 2 replicas, 512Mi memory, 1Gi persistence
+helm upgrade --install agent-platform charts/agent-platform \
+  -f charts/agent-platform/values-staging.yaml \
+  --set anthropicApiKey=$ANTHROPIC_API_KEY
+
+# Production — 3 replicas, 1Gi memory, 10Gi persistence, auth enabled
+helm upgrade --install agent-platform charts/agent-platform \
+  -f charts/agent-platform/values-prod.yaml \
+  --set anthropicApiKey=$ANTHROPIC_API_KEY \
+  --set platformApiKey=$PLATFORM_API_KEY
+```
 
 ### Helm chart
 
 ```
 charts/agent-platform/
-├── Chart.yaml          # chart metadata, Prometheus + Grafana as dependencies
-├── values.yaml         # all defaults (override with --set or -f)
+├── Chart.yaml              # chart metadata, Prometheus + Grafana as dependencies
+├── values.yaml             # base defaults
+├── values-staging.yaml     # staging overrides
+├── values-prod.yaml        # production overrides
 └── templates/
-    ├── deployment.yaml     # 2 replicas, probes, resource limits
+    ├── deployment.yaml     # replicas, probes, resource limits, volume mount
     ├── service.yaml        # NodePort
-    ├── hpa.yaml            # scale 2→5 on CPU 70% / memory 80%
+    ├── hpa.yaml            # scale 2→5 on CPU/memory thresholds
     ├── networkpolicy.yaml  # ingress :8000, egress DNS + OTLP + HTTPS
-    ├── secret.yaml         # ANTHROPIC_API_KEY
+    ├── secret.yaml         # ANTHROPIC_API_KEY + PLATFORM_API_KEY
+    ├── pvc.yaml            # SQLite data volume (when persistence.enabled)
     └── jaeger.yaml         # Jaeger all-in-one
 ```
-
-**Custom values:**
-
-```bash
-helm upgrade --install agent-platform charts/agent-platform \
-  -n agent-platform \
-  --set anthropicApiKey=$ANTHROPIC_API_KEY \
-  --set replicaCount=3 \
-  --set autoscaling.maxReplicas=10
-```
-
-### Observability endpoints (Kubernetes)
-
-| Service | URL |
-|---------|-----|
-| API | http://localhost:8000 |
-| Jaeger UI | http://localhost:16686 |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000 (admin / admin123) |
 
 ## Project Structure
 
@@ -200,14 +204,16 @@ agent-platform/
 │   ├── agent/
 │   │   ├── models.py           # AgentSession pydantic model
 │   │   ├── runner.py           # Claude agent execution loop
-│   │   └── store.py            # In-memory session store
+│   │   └── store.py            # SQLite session store
+│   ├── middleware/
+│   │   └── auth.py             # X-API-Key middleware
 │   ├── observability/
 │   │   ├── tracing.py          # OTLP tracing setup
 │   │   └── metrics.py          # Prometheus metrics
 │   └── main.py                 # App entrypoint
 ├── frontend/                   # React + Vite + TypeScript UI
 │   └── src/
-│       ├── api.ts              # Fetch wrappers
+│       ├── api.ts              # Fetch wrappers (X-API-Key aware)
 │       ├── types.ts            # AgentSession, ToolCall types
 │       ├── hooks/              # useSessions, useSession (polling)
 │       └── components/         # SessionList, SessionDetail, StatusBadge, NewSessionForm
@@ -229,6 +235,9 @@ agent-platform/
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | — | **Required.** Anthropic API key |
+| `TAVILY_API_KEY` | — | Optional. Enables real web search via Tavily |
+| `PLATFORM_API_KEY` | — | Optional. Enables `X-API-Key` auth on all `/api/*` routes |
+| `DB_PATH` | `/data/sessions.db` | SQLite database path |
 | `ENVIRONMENT` | `development` | Deployment environment tag |
 | `OTLP_ENDPOINT` | `http://jaeger:4317` | OpenTelemetry collector endpoint |
 | `MAX_TOKENS` | `4096` | Max tokens per agent turn |
