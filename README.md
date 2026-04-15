@@ -150,6 +150,8 @@ Sessions are persisted to a named Docker volume (`agent-data`). All four service
 
 ## Kubernetes Deployment
 
+> For a production AWS/EKS target cluster to deploy this into, see [dev-platform](https://github.com/nvojvodic-white/dev-platform) — a companion repo that provisions the full AWS infrastructure (VPC, EKS, RDS, GitOps with Argo CD) this workload is designed to run on.
+
 ### Prerequisites
 
 - [kind](https://kind.sigs.k8s.io/) · [kubectl](https://kubernetes.io/docs/tasks/tools/) · [helm](https://helm.sh/) · Docker
