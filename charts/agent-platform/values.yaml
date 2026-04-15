@@ -1,5 +1,12 @@
 replicaCount: 2
 
+# Set to enable API key authentication (X-API-Key header)
+platformApiKey: ""
+
+persistence:
+  enabled: false
+  size: 1Gi
+
 image:
   repository: agent-platform
   tag: latest

@@ -1,5 +1,6 @@
-import subprocess
+import os
 import sys
+import httpx
 from io import StringIO
 
 
@@ -15,8 +16,38 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
 
 
 def _web_search(query: str) -> str:
-    # Stub for now — will wire to real search in Phase 2
-    return f"[web_search stub] Results for: {query}"
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return f"[web_search] TAVILY_API_KEY not set. Query was: {query}"
+
+    try:
+        response = httpx.post(
+            "https://api.tavily.com/search",
+            json={
+                "api_key": api_key,
+                "query": query,
+                "max_results": 5,
+                "search_depth": "basic",
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        results = data.get("results", [])
+        if not results:
+            return "No results found."
+
+        lines = []
+        for r in results:
+            lines.append(f"**{r.get('title', 'No title')}**")
+            lines.append(r.get("url", ""))
+            lines.append(r.get("content", "")[:300])
+            lines.append("")
+        return "\n".join(lines)
+
+    except Exception as e:
+        return f"Search error: {str(e)}"
 
 
 def _execute_code(code: str) -> str:

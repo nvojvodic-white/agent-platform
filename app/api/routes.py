@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from app.agent.models import AgentSession
 from app.agent.runner import run_agent
-from app.agent.store import save_session, get_session, list_sessions
+from app.agent.store import save_session, get_session, list_sessions, delete_session
 from app.observability.metrics import sessions_created
 
 router = APIRouter()
@@ -40,9 +40,7 @@ def get_session_by_id(session_id: str):
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str):
-    from app.agent.store import _sessions
-    if session_id not in _sessions:
+def delete_session_by_id(session_id: str):
+    if not delete_session(session_id):
         raise HTTPException(status_code=404, detail="Session not found")
-    del _sessions[session_id]
     return {"deleted": session_id}

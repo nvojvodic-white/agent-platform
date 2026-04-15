@@ -8,6 +8,9 @@ services:
     environment:
       - ENVIRONMENT=development
       - OTLP_ENDPOINT=http://jaeger:4317
+      - DB_PATH=/data/sessions.db
+    volumes:
+      - agent-data:/data
     depends_on:
       - jaeger
     healthcheck:
@@ -16,6 +19,9 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+
+volumes:
+  agent-data:
 
   jaeger:
     image: jaegertracing/all-in-one:latest

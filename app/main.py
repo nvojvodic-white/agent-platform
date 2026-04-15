@@ -2,6 +2,7 @@ from fastapi import FastAPI, Response
 from app.api.routes import router
 from app.observability.tracing import setup_tracing
 from app.observability.metrics import get_metrics
+from app.middleware.auth import APIKeyMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 setup_tracing()
@@ -12,6 +13,7 @@ app = FastAPI(
     version="0.1.0"
 )
 
+app.add_middleware(APIKeyMiddleware)
 FastAPIInstrumentor.instrument_app(app)
 app.include_router(router, prefix="/api/v1")
 
