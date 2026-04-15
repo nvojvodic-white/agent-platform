@@ -20,9 +20,6 @@ services:
       retries: 3
     restart: unless-stopped
 
-volumes:
-  agent-data:
-
   jaeger:
     image: jaegertracing/all-in-one:latest
     ports:
@@ -52,3 +49,6 @@ volumes:
     depends_on:
       - prometheus
     restart: unless-stopped
+
+volumes:
+  agent-data:
