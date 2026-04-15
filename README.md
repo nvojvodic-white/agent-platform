@@ -40,23 +40,24 @@ This project is a portfolio demonstration of production-grade platform engineeri
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Kubernetes (kind)                  │
-│                                                      │
-│  ┌──────────────┐    ┌─────────┐    ┌────────────┐  │
-│  │  FastAPI App │───▶│  Jaeger │    │ Prometheus │  │
-│  │  (2 replicas)│    │  Traces │    │  Metrics   │  │
-│  │   + HPA 2-5  │    └─────────┘    └─────┬──────┘  │
-│  └──────┬───────┘                         │         │
-│         │ OTLP/gRPC                        ▼         │
-│         │                          ┌────────────┐   │
-│         ▼                          │  Grafana   │   │
-│  ┌──────────────┐                  │ Dashboards │   │
-│  │ Anthropic API│                  └────────────┘   │
-│  │  (Claude)    │                                   │
-│  └──────────────┘                                   │
-└─────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    User(["User / React UI"])
+
+    subgraph K8s["Kubernetes (kind)"]
+        API["FastAPI App\n2 replicas · HPA 2→5\nNetworkPolicy · probes"]
+        Jaeger["Jaeger\nDistributed Traces"]
+        Prometheus["Prometheus\nMetrics"]
+        Grafana["Grafana\nDashboards"]
+    end
+
+    Anthropic["Anthropic API\n(Claude)"]
+
+    User -->|HTTP| API
+    API -->|OTLP/gRPC| Jaeger
+    API -->|/metrics scrape| Prometheus
+    API -->|tool calls / LLM turns| Anthropic
+    Prometheus -->|datasource| Grafana
 ```
 
 **Stack:** FastAPI · Anthropic Claude SDK · React · Vite · TypeScript · OpenTelemetry · Jaeger · Prometheus · Grafana · Docker · Kubernetes (kind) · Helm
