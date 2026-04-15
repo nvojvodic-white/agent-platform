@@ -43,20 +43,21 @@ This project is a portfolio demonstration of production-grade platform engineeri
 ```mermaid
 flowchart LR
     User(["User / React UI"])
-    Anthropic["Anthropic API\n(Claude)"]
 
     subgraph K8s["Kubernetes (kind)"]
+        direction LR
         API["FastAPI App\n2 replicas · HPA 2→5\nNetworkPolicy · probes"]
         Jaeger["Jaeger\nTraces"]
         Prometheus["Prometheus\nMetrics"]
         Grafana["Grafana\nDashboards"]
-
-        API -->|OTLP/gRPC| Jaeger
-        API -->|scrape| Prometheus
-        Prometheus -->|datasource| Grafana
     end
 
+    Anthropic["Anthropic API\n(Claude)"]
+
     User -->|HTTP| API
+    API -->|OTLP/gRPC| Jaeger
+    API -->|scrape| Prometheus
+    Prometheus -->|datasource| Grafana
     API -->|LLM + tool calls| Anthropic
 ```
 
