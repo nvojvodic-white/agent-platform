@@ -8,32 +8,44 @@ export function useSession(id: string | null) {
   const [session, setSession] = useState<AgentSession | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const fetch = useCallback(async () => {
-    if (!id) return
+  const fetchOnce = useCallback(async () => {
+    if (!id) return null
     try {
-      const data = await getSession(id)
-      setSession(data)
+      return await getSession(id)
     } catch {
-      // session may have been deleted
+      return null
     }
   }, [id])
 
   useEffect(() => {
-    if (!id) { setSession(null); return }
-    setLoading(true)
-    fetch().finally(() => setLoading(false))
+    if (!id) return
 
-    // Keep polling while running
-    const id_ = setInterval(async () => {
-      const data = await getSession(id).catch(() => null)
-      if (data) {
+    let cancelled = false
+
+    setLoading(true)
+    fetchOnce().then(data => {
+      if (!cancelled) {
         setSession(data)
-        if (data.status !== 'running') clearInterval(id_)
+        setLoading(false)
+      }
+    })
+
+    const interval = setInterval(async () => {
+      const data = await getSession(id).catch(() => null)
+      if (!cancelled && data) {
+        setSession(data)
+        if (data.status !== 'running') clearInterval(interval)
       }
     }, POLL_MS)
 
-    return () => clearInterval(id_)
-  }, [id, fetch])
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [id, fetchOnce])
 
-  return { session, loading }
+  // Reset session when id becomes null
+  const derivedSession = id ? session : null
+
+  return { session: derivedSession, loading }
 }
