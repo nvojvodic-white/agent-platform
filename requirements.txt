@@ -3,7 +3,7 @@ setuptools>=78.0.0
 wheel>=0.46.2
 annotated-doc==0.0.4
 annotated-types==0.7.0
-anthropic==0.95.0
+anthropic==0.96.0
 anyio==4.13.0
 asgiref==3.11.1
 certifi==2026.2.25
@@ -42,3 +42,9 @@ typing_extensions==4.15.0
 uvicorn==0.44.0
 wrapt==2.1.2
 zipp==3.23.1
+
+# RAG service (app/rag/)
+langchain==1.3.1
+langchain-anthropic==1.4.3
+langchain-chroma==1.1.0
+chromadb==1.5.9
