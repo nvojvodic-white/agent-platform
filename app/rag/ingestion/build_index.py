@@ -42,6 +42,10 @@ def main() -> None:
     docs = load_documents()
     print(f"Loaded {len(docs)} articles")
 
+    # 800/120 balances definitional coherence (entity definitions cluster in
+    # 200-400 char spans) against event-narrative continuity (paragraphs run
+    # ~600-1000 chars). To be A/B tested against parent-document retrieval on
+    # day 9.
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
         chunk_overlap=120,

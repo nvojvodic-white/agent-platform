@@ -1,0 +1,68 @@
+{
+  "description": "Probe queries used to manually inspect retrieval quality after the Day 2 ingest. Each entry captures the observed top hit and a failure-mode tag pointing at which technique would actually fix it. Used as the seed eval set for the Day 10 RAGAS run.",
+  "corpus": {
+    "sources": ["fandom_lotr", "wikipedia"],
+    "articles": 681,
+    "chunks": 5763,
+    "embedding_model": "openai/text-embedding-3-small",
+    "splitter": "RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)"
+  },
+  "queries": [
+    {
+      "query": "Who is Gandalf?",
+      "expected_topic": "Gandalf",
+      "observed_top_hit": "fandom_lotr :: Gandalf",
+      "verdict": "good",
+      "failure_mode": null,
+      "notes": "Single-entity definitional query. Top 3 all from the Gandalf article. Baseline retrieval handles this cleanly."
+    },
+    {
+      "query": "Who killed Smaug?",
+      "expected_topic": "Bard the Bowman",
+      "observed_top_hit": "wikipedia :: Dragons in Middle-earth",
+      "verdict": "partial",
+      "failure_mode": "recall-not-ranking",
+      "notes": "Answer 'Bard' appears in all three retrieved chunks but never as the top result's title. Multi-hop: 'Smaug' -> 'killed by' -> 'Bard'. Dense retrieval on the query pulls Smaug-centric chunks. A reranker cannot fix this because Bard's own article is not in the candidate set; the recall is the problem. Candidate for HyDE or query decomposition on Day 8."
+    },
+    {
+      "query": "What rings did the Dwarves get?",
+      "expected_topic": "Rings of Power / Dwarves",
+      "observed_top_hit": "fandom_lotr :: Dwarves",
+      "verdict": "good",
+      "failure_mode": null,
+      "notes": "Both sources' Dwarves articles surfaced. Cross-source consensus on factual queries is a positive signal."
+    },
+    {
+      "query": "Tell me about the Battle of Five Armies",
+      "expected_topic": "Battle of Five Armies",
+      "observed_top_hit": "fandom_lotr :: Battle of Five Armies",
+      "verdict": "good-with-noise",
+      "failure_mode": "chunk-cleaning",
+      "notes": "Correct article retrieved, but the chunk leads with Fandom maintenance template text ('The descriptive majority of this article's text is unsourced...'). FANDOM_STRIP_SELECTORS in fetch.py needs to also drop .notice / .ambox / .mbox. Day 2.5 cleanup."
+    },
+    {
+      "query": "Beren and Luthien",
+      "expected_topic": "Beren and Lúthien (the love story)",
+      "observed_top_hit": "fandom_lotr :: Lúthien",
+      "verdict": "partial",
+      "failure_mode": "reranking",
+      "notes": "Top 2 are correct Lúthien chunks. Third chunk is Edith Tolkien's gravestone inscription ('LUTHIEN 1889-1971'). Semantically related but wrong-context. A cross-encoder reranker would see the query expects 'Beren AND Lúthien together' and demote the chunk that only matches one name. Day 7 territory."
+    },
+    {
+      "query": "What is mithril?",
+      "expected_topic": "Mithril",
+      "observed_top_hit": "wikipedia :: Mithril",
+      "verdict": "good",
+      "failure_mode": null,
+      "notes": "All three results from Wikipedia's Mithril article. Definitional 'what is X?' queries naturally favor Wikipedia's encyclopedic prose over Fandom's narrative style. Source-quality observation, not a bug. Source-weighted routing is a Day 11+ exploration if we ever care."
+    },
+    {
+      "query": "Tom Bombadil",
+      "expected_topic": "Tom Bombadil",
+      "observed_top_hit": "wikipedia :: Middle-earth peoples",
+      "verdict": "partial",
+      "failure_mode": "hybrid-search",
+      "notes": "Bombadil's own dedicated article was not the top hit; we got the generic 'Middle-earth peoples' page that mentions him in a subsection. Likely the Bombadil article has lower keyword density of his own name relative to disambiguating context, so dense-only retrieval misses the keyword signal. Poster child for hybrid BM25 + dense retrieval on Day 6. Re-run this exact query after that change."
+    }
+  ]
+}
