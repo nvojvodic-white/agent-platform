@@ -1,5 +1,5 @@
 {
-  "description": "Probe queries used to manually inspect retrieval quality after the Day 2 ingest. Each entry captures the observed top hit and a failure-mode tag pointing at which technique would actually fix it. Used as the seed eval set for the Day 10 RAGAS run.",
+  "description": "Probe queries used to inspect retrieval quality. Each entry captures the Day 2 observed top hit, a failure-mode tag pointing at the technique that would fix it, and expected_topics / expected_top_source_titles for Day 10 RAGAS scoring.",
   "corpus": {
     "sources": ["fandom_lotr", "wikipedia"],
     "articles": 681,
@@ -11,6 +11,8 @@
     {
       "query": "Who is Gandalf?",
       "expected_topic": "Gandalf",
+      "expected_topics": ["wizard", "Istari", "Olórin", "Maia", "Mithrandir"],
+      "expected_top_source_titles": ["Gandalf"],
       "observed_top_hit": "fandom_lotr :: Gandalf",
       "verdict": "good",
       "failure_mode": null,
@@ -19,6 +21,8 @@
     {
       "query": "Who killed Smaug?",
       "expected_topic": "Bard the Bowman",
+      "expected_topics": ["Bard", "Black Arrow", "Lake-town", "Esgaroth"],
+      "expected_top_source_titles": ["Bard", "Smaug", "Battle of Lake-town"],
       "observed_top_hit": "wikipedia :: Dragons in Middle-earth",
       "verdict": "partial",
       "failure_mode": "recall-not-ranking",
@@ -27,6 +31,8 @@
     {
       "query": "What rings did the Dwarves get?",
       "expected_topic": "Rings of Power / Dwarves",
+      "expected_topics": ["Seven Rings", "Dwarf-rings", "Sauron"],
+      "expected_top_source_titles": ["Rings of Power", "Dwarves", "Seven Rings"],
       "observed_top_hit": "fandom_lotr :: Dwarves",
       "verdict": "good",
       "failure_mode": null,
@@ -35,6 +41,8 @@
     {
       "query": "Tell me about the Battle of Five Armies",
       "expected_topic": "Battle of Five Armies",
+      "expected_topics": ["Erebor", "Bilbo", "Thorin", "Bolg", "Eagles"],
+      "expected_top_source_titles": ["Battle of Five Armies"],
       "observed_top_hit": "fandom_lotr :: Battle of Five Armies",
       "verdict": "good-with-noise",
       "failure_mode": "chunk-cleaning",
@@ -43,6 +51,8 @@
     {
       "query": "Beren and Luthien",
       "expected_topic": "Beren and Lúthien (the love story)",
+      "expected_topics": ["Silmaril", "Thingol", "Morgoth", "Carcharoth"],
+      "expected_top_source_titles": ["Beren", "Lúthien", "Of Beren and Lúthien"],
       "observed_top_hit": "fandom_lotr :: Lúthien",
       "verdict": "partial",
       "failure_mode": "reranking",
@@ -51,6 +61,8 @@
     {
       "query": "What is mithril?",
       "expected_topic": "Mithril",
+      "expected_topics": ["Moria", "Khazad-dûm", "silver", "Bilbo's mail"],
+      "expected_top_source_titles": ["Mithril"],
       "observed_top_hit": "wikipedia :: Mithril",
       "verdict": "good",
       "failure_mode": null,
@@ -59,6 +71,8 @@
     {
       "query": "Tom Bombadil",
       "expected_topic": "Tom Bombadil",
+      "expected_topics": ["Old Forest", "Goldberry", "Withywindle", "enigma"],
+      "expected_top_source_titles": ["Tom Bombadil"],
       "observed_top_hit": "wikipedia :: Middle-earth peoples",
       "verdict": "partial",
       "failure_mode": "hybrid-search",
