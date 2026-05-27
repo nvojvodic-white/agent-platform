@@ -1,5 +1,5 @@
 {
-  "description": "Probe queries used to inspect retrieval quality. Each entry captures the Day 2 observed top hit, a failure-mode tag pointing at the technique that would fix it, and expected_topics / expected_top_source_titles for Day 10 RAGAS scoring.",
+  "description": "Probe queries used to inspect retrieval quality. Each in_corpus entry captures the Day 2 retrieval observation, the Day 3 end-to-end finding (after the LLM synthesised over retrieved chunks), and a failure_mode tag pointing at the technique that would fix the remaining real gap. The out_of_corpus entries probe whether the citation-aware prompt successfully refuses to answer when grounding is absent.",
   "corpus": {
     "sources": ["fandom_lotr", "wikipedia"],
     "articles": 681,
@@ -7,7 +7,7 @@
     "embedding_model": "openai/text-embedding-3-small",
     "splitter": "RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=120)"
   },
-  "queries": [
+  "in_corpus": [
     {
       "query": "Who is Gandalf?",
       "expected_topic": "Gandalf",
@@ -16,7 +16,8 @@
       "observed_top_hit": "fandom_lotr :: Gandalf",
       "verdict": "good",
       "failure_mode": null,
-      "notes": "Single-entity definitional query. Top 3 all from the Gandalf article. Baseline retrieval handles this cleanly."
+      "notes": "Single-entity definitional query. Top 3 all from the Gandalf article. Baseline retrieval handles this cleanly.",
+      "day_3_finding": "Still good end-to-end. Top-4 all from Gandalf article. Answer cites [1][2][3] correctly, covers Istari/Olórin/Mithrandir/appearance/major deeds without leaking outside knowledge."
     },
     {
       "query": "Who killed Smaug?",
@@ -25,8 +26,9 @@
       "expected_top_source_titles": ["Bard", "Smaug", "Battle of Lake-town"],
       "observed_top_hit": "wikipedia :: Dragons in Middle-earth",
       "verdict": "partial",
-      "failure_mode": "recall-not-ranking",
-      "notes": "Answer 'Bard' appears in all three retrieved chunks but never as the top result's title. Multi-hop: 'Smaug' -> 'killed by' -> 'Bard'. Dense retrieval on the query pulls Smaug-centric chunks. A reranker cannot fix this because Bard's own article is not in the candidate set; the recall is the problem. Candidate for HyDE or query decomposition on Day 8."
+      "failure_mode": "synthesis-recovered",
+      "notes": "Day 2 verdict 'partial / recall-not-ranking'. Bard's own article never made the candidate set; retrieval pulled Smaug-centric chunks.",
+      "day_3_finding": "Falsified the Day 2 prognosis. Retrieval still pulls Smaug-centric chunks (Dragons in ME, Thorin II, Smaug, ME peoples — no Bard article), but every one of them mentions Bard, and Claude synthesised a complete answer (Bard / Black Arrow / Lake-town / thrush / Bilbo's discovery) with correct inline citations. HyDE / query decomposition on Day 8 is now a NICE-TO-HAVE, not the load-bearing fix. Reclassify: synthesis recovered the multi-hop."
     },
     {
       "query": "What rings did the Dwarves get?",
@@ -36,7 +38,8 @@
       "observed_top_hit": "fandom_lotr :: Dwarves",
       "verdict": "good",
       "failure_mode": null,
-      "notes": "Both sources' Dwarves articles surfaced. Cross-source consensus on factual queries is a positive signal."
+      "notes": "Both sources' Dwarves articles surfaced. Cross-source consensus on factual queries is a positive signal.",
+      "day_3_finding": "Still good. Both sources' Dwarves articles + WP Dwarves-in-Middle-earth surfaced. Answer correctly distinguishes the Dwarven outcome (greed, not wraithdom) from the Men/Nazgûl outcome and traces Durin III -> Thrór -> Thráin II line. Cross-source consensus held."
     },
     {
       "query": "Tell me about the Battle of Five Armies",
@@ -45,8 +48,9 @@
       "expected_top_source_titles": ["Battle of Five Armies"],
       "observed_top_hit": "fandom_lotr :: Battle of Five Armies",
       "verdict": "good-with-noise",
-      "failure_mode": "chunk-cleaning",
-      "notes": "Correct article retrieved, but the chunk leads with Fandom maintenance template text ('The descriptive majority of this article's text is unsourced...'). FANDOM_STRIP_SELECTORS in fetch.py needs to also drop .notice / .ambox / .mbox. Day 2.5 cleanup."
+      "failure_mode": "synthesis-recovered",
+      "notes": "Day 2 verdict 'good-with-noise / chunk-cleaning'. The retrieved chunk leads with Fandom maintenance template text ('The descriptive majority of this article's text is unsourced...').",
+      "day_3_finding": "Template noise was invisible in the final answer — Claude ignored the maintenance text and gave a clean account of the battle (allies, Bolg/Gundabad, Thorin/Fíli/Kíli wounded, Beorn slays Bolg, Bilbo knocked out). Day 2.5 chunk cleanup is genuinely lower priority than Day 2 implied. Keep it as nice-to-have, not blocking."
     },
     {
       "query": "Beren and Luthien",
@@ -55,8 +59,9 @@
       "expected_top_source_titles": ["Beren", "Lúthien", "Of Beren and Lúthien"],
       "observed_top_hit": "fandom_lotr :: Lúthien",
       "verdict": "partial",
-      "failure_mode": "reranking",
-      "notes": "Top 2 are correct Lúthien chunks. Third chunk is Edith Tolkien's gravestone inscription ('LUTHIEN 1889-1971'). Semantically related but wrong-context. A cross-encoder reranker would see the query expects 'Beren AND Lúthien together' and demote the chunk that only matches one name. Day 7 territory."
+      "failure_mode": "synthesis-recovered",
+      "notes": "Day 2 verdict 'partial / reranking'. Edith Tolkien's gravestone chunk surfaced at #3 and looked like wrong-context noise that a cross-encoder would demote.",
+      "day_3_finding": "Falsified the 'reranking is the fix' diagnosis. Claude integrated the Edith Tolkien grave chunk as a closing paragraph ('Tolkien identified himself and his wife Edith with these characters, having BEREN inscribed on his own grave marker and LUTHIEN on hers'). The chunk wasn't wrong-context — it was real biographical context the LLM used appropriately. Demoting it with a reranker would have made the answer worse, not better."
     },
     {
       "query": "What is mithril?",
@@ -66,7 +71,8 @@
       "observed_top_hit": "wikipedia :: Mithril",
       "verdict": "good",
       "failure_mode": null,
-      "notes": "All three results from Wikipedia's Mithril article. Definitional 'what is X?' queries naturally favor Wikipedia's encyclopedic prose over Fandom's narrative style. Source-quality observation, not a bug. Source-weighted routing is a Day 11+ exploration if we ever care."
+      "notes": "All three results from Wikipedia's Mithril article. Definitional 'what is X?' queries naturally favor Wikipedia's encyclopedic prose over Fandom's narrative style.",
+      "day_3_finding": "Still good and still Wikipedia-dominated (4/4 chunks from WP Mithril). Source-style observation from Day 2 confirmed: encyclopedic prose wins definitional queries. Etymology (mith + ril) and Hobbit/FotR quotes both made it into the answer."
     },
     {
       "query": "Tom Bombadil",
@@ -75,8 +81,26 @@
       "expected_top_source_titles": ["Tom Bombadil"],
       "observed_top_hit": "wikipedia :: Middle-earth peoples",
       "verdict": "partial",
-      "failure_mode": "hybrid-search",
-      "notes": "Bombadil's own dedicated article was not the top hit; we got the generic 'Middle-earth peoples' page that mentions him in a subsection. Likely the Bombadil article has lower keyword density of his own name relative to disambiguating context, so dense-only retrieval misses the keyword signal. Poster child for hybrid BM25 + dense retrieval on Day 6. Re-run this exact query after that change."
+      "failure_mode": "candidate-set-miss",
+      "notes": "Day 2 verdict 'partial / hybrid-search'. Bombadil's own dedicated article was not the top hit.",
+      "day_3_finding": "The one case the LLM CANNOT compensate for, and the most diagnostically useful query in the set. Retrieval still surfaces Middle-earth peoples / Adventures of Tom Bombadil / Barrow-wight — Bombadil's own page never enters the candidate set. Answer is good because the candidate chunks happen to summarise him, but Goldberry / Withywindle / Old Forest specifics are absent. This is the clean example of the candidate-set-miss class of failure: hybrid BM25 + dense retrieval (Day 6) is the load-bearing fix. Reranking won't help; synthesis can't compensate. Re-run this exact query immediately after Day 6 to confirm hybrid lifts the right document into top-k."
+    }
+  ],
+  "out_of_corpus": [
+    {
+      "query": "Who is Sauron's accountant?",
+      "expected_behavior": "Refuse: 'context does not contain information about ...'",
+      "notes": "Verifies the system prompt's 'answer only from context' constraint holds for a question that sounds Tolkien-flavoured but has no in-corpus answer."
+    },
+    {
+      "query": "What did Frodo have for breakfast on the third Tuesday of Halimath?",
+      "expected_behavior": "Refuse: specific fabricated detail with no source.",
+      "notes": "Probes whether Claude confabulates plausible-sounding specifics when the corpus is silent. Halimath is a real Shire-reckoning month so the question reads grounded but is unanswerable."
+    },
+    {
+      "query": "How does the One Ring compare to the rings in Wagner's Der Ring des Nibelungen?",
+      "expected_behavior": "Refuse or use Outside context: prefix. Tolkien wikis discuss the One Ring extensively but not the Wagner comparison.",
+      "notes": "Tests the gap between in-corpus topic (One Ring) and out-of-corpus claim (Wagner comparison). Easiest failure mode for an LLM: half the question has rich grounding, half doesn't."
     }
   ]
 }
