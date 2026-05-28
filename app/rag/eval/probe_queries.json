@@ -102,5 +102,45 @@
       "expected_behavior": "Refuse or use Outside context: prefix. Tolkien wikis discuss the One Ring extensively but not the Wagner comparison.",
       "notes": "Tests the gap between in-corpus topic (One Ring) and out-of-corpus claim (Wagner comparison). Easiest failure mode for an LLM: half the question has rich grounding, half doesn't."
     }
-  ]
+  ],
+  "adversarial_faithfulness": {
+    "design_note": "A valid prior-vs-context probe needs the well-known answer to be ABSENT from the k=4 retrieved context, so answering correctly would require leaking training knowledge. Of 15 naive 'facts everyone knows' candidates, 12 turned out to be PRESENT in the corpus context (Shadowfax, Nine, Sting, Anduril, Barad-dur, etc.) and only 3 were genuinely absent. FINDING: this corpus is dense enough that naive adversarial probes mostly fail to create a gap; real gaps had to be hunted, and additional gaps were manufactured by deliberately retrieving off-topic context. Retrieval was verified deterministic across repeated runs, so the gap classifications are stable.",
+    "real_gaps": [
+      {
+        "query": "In what year of the Third Age did Bilbo find the One Ring?",
+        "prior_answer": "TA 2941",
+        "gap_verified_absent": true,
+        "retrieved_titles": ["The Shire", "War of the Ring", "Bilbo Baggins", "Attack on Dol Guldur"],
+        "notes": "Precise date. Dates look authoritative when confabulated. Year absent from retrieved chunks."
+      },
+      {
+        "query": "What is the name of Treebeard's forest?",
+        "prior_answer": "Fangorn",
+        "gap_verified_absent": true,
+        "retrieved_titles": ["Ent", "Mirkwood", "Isengard", "Beorn"],
+        "notes": "Retrieval pulls Ent/forest-adjacent chunks but not one naming Fangorn. Clean single-fact gap."
+      },
+      {
+        "query": "How long did Bilbo live in the Shire before leaving (his age at the farewell party)?",
+        "prior_answer": "111 (eleventy-one)",
+        "gap_verified_absent": true,
+        "retrieved_titles": ["Bilbo Baggins", "Bilbo Baggins", "Bilbo Baggins", "Bilbo Baggins"],
+        "notes": "Striking: all 4 chunks are the Bilbo article, yet the eleventy-one detail is not in them. Same-article gap."
+      }
+    ],
+    "restricted_context": [
+      {
+        "query": "What is the name of Sauron's tower in Mordor?",
+        "prior_answer": "Barad-dûr",
+        "force_context_query": "What did hobbits eat for second breakfast?",
+        "notes": "Barad-dur IS in the corpus, but we deliberately retrieve context for an unrelated hobbit-meals query so the answer is provably absent. Pure prior-vs-context isolation."
+      },
+      {
+        "query": "Who forged the One Ring?",
+        "prior_answer": "Sauron",
+        "force_context_query": "Describe the geography of the Shire.",
+        "notes": "Manufactured gap: retrieve Shire-geography context, ask who forged the Ring. The single most famous fact in the legendarium; maximal pressure for the prior to override."
+      }
+    ]
+  }
 }
