@@ -1,5 +1,68 @@
 # RAG findings
 
+## Day 8 — Query transformation: HyDE and Multi-Query
+
+Built two query-transformation retrievers and measured both with the Day 7 RAGAS harness:
+- `app/rag/retrieval/hyde.py` — generate a hypothetical answer, embed it, retrieve on it.
+- `app/rag/retrieval/multi_query.py` — generate ~3 phrasings, retrieve each, dedupe,
+  re-rank the union by similarity to the original query, keep top-k.
+
+Both wired into `get_retriever(kind=hyde|multi_query)`. LLM calls (judge + both
+transforms) hardened with `max_retries=5` after Day 7's transient-500 trouble.
+
+Five-way table (mean over 7 in-corpus probes, k=4):
+
+| retriever | faithfulness | answer_relevancy | context_precision | context_recall |
+|---|---|---|---|---|
+| dense (Day 7 baseline) | 0.913 | 0.803 | 0.881 | 0.821 |
+| dense (Day 8 rerun)    | 0.949 | 0.801 | 0.881 | 0.821 |
+| sparse                 | 0.832 | 0.691 | 0.440 | 0.179 |
+| hyde                   | 0.928 | 0.812 | **0.937** | 0.821 |
+| multi_query            | 0.900 | 0.809 | 0.881 | 0.821 |
+
+**Judge-variance baseline (the point of the dense rerun):** the two *context* metrics
+are identical across the two dense runs (0.881, 0.821) — they're deterministic given
+fixed retrieval (per-chunk relevance judgments are stable). Faithfulness moved +0.036
+and relevancy wobbled. So: trust any delta on context_precision/recall, but only believe
+faithfulness/relevancy deltas larger than ~0.04.
+
+**HyDE is the one real win — on precision, not recall.** context_precision 0.937 vs
+dense 0.881 (+0.056 on a deterministic metric = real). HyDE's answer-shaped queries pull
+cleaner chunks: Mithril precision 0.75→1.0, Dwarves 0.58→0.83. The Smaug case (HyDE's
+textbook target) confirmed it qualitatively too — HyDE surfaced a "Destruction of
+Lake-town" chunk at rank 1 that dense never reached.
+
+**But HyDE's recall mean (0.821) hides a per-probe swap, not a tie:**
+- Mithril recall 0.33 → 0.667 — HyDE *fixed* the worst dense recall probe. Mithril was a
+  "query-shape" problem (the plan's diagnostic): reshaping the query reached more of the
+  article.
+- Battle of Five Armies recall 1.0 → 0.667 — HyDE *regressed* this. The hypothetical
+  answer pulled it slightly off the exact battle chunks.
+
+So HyDE improves precision clearly and redistributes recall (helps shape-sensitive
+probes, costs already-good ones) rather than lifting the recall ceiling. Net: a genuine
+precision lever worth keeping available, but not an unambiguous default-replacement.
+
+**Multi-query is indistinguishable from dense** (precision 0.881, recall 0.821 — both
+identical; faith/relevancy within noise). After re-ranking the variant union by
+similarity to the original query, it converges to almost exactly dense's chunks — so it
+adds the LLM cost of variant generation for no measurable gain on this corpus.
+
+**Method note — a real bug found and fixed mid-eval:** the first multi_query run scored
+catastrophically (recall 0.41, three probes at 0.0 relevancy). Investigation showed it
+was a *truncation artifact*, not the technique: `MultiQueryRetriever` returns the deduped
+union grouped by variant in generation order, not relevance-ranked, so naive `[:k]` kept
+a weak variant's off-topic chunks and dropped good ones at positions 5-7. Fixed by
+embedding the original query and ranking the union by cosine similarity before truncating.
+The 0.41 number was measuring the bug, not multi-query — re-ran fairly to get 0.821.
+
+**Net / decision:** dense stays the default. HyDE is the only technique that moved a
+trustworthy metric (precision +0.056) and is retained as an opt-in `kind`. Recall sits at
+~0.82 across dense/hyde/multi_query and was not lifted by any query transform — evidence
+that the recall ceiling on this corpus is set by chunking/corpus coverage, not query
+phrasing. That points at parent-document / chunk-level work (Day 9) as the next lever for
+the Mithril/Bombadil recall gaps, not more query engineering.
+
 ## Day 7 — RAGAS automated eval (replaces Day 6 hand-scoring)
 
 Built `app/rag/eval/ragas_eval.py` (ragas 0.4.0; the plan's 0.2.6 pin conflicts with

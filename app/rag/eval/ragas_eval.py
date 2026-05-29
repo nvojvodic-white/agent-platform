@@ -71,7 +71,7 @@ def main(retriever_kind: str = "dense", k: int = 4) -> None:
     print(f"Dataset: {len(ds.samples)} probes with ground truth")
 
     judge = LangchainLLMWrapper(
-        ChatAnthropic(model="claude-sonnet-4-5", max_tokens=4096)
+        ChatAnthropic(model="claude-sonnet-4-5", max_tokens=4096, max_retries=5)
     )
     embed = LangchainEmbeddingsWrapper(
         OpenAIEmbeddings(model="text-embedding-3-small")
