@@ -1,5 +1,6 @@
 """Chunk Middle-earth articles and build a Chroma index."""
 import json
+import pickle
 import time
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from langchain_core.documents import Document
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from tqdm import tqdm
+
+from app.rag.retrieval.vectorstore import CHUNKS_PATH
 
 load_dotenv()
 
@@ -53,6 +56,12 @@ def main() -> None:
     )
     chunks = splitter.split_documents(docs)
     print(f"Produced {len(chunks)} chunks")
+
+    # Persist chunks for BM25 / sparse retrieval, kept in sync with Chroma.
+    Path(CHUNKS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with open(CHUNKS_PATH, "wb") as f:
+        pickle.dump(chunks, f)
+    print(f"Persisted {len(chunks)} chunks to {CHUNKS_PATH}")
     print(
         f"Avg chunk length: "
         f"{sum(len(c.page_content) for c in chunks) / len(chunks):.0f} chars"
