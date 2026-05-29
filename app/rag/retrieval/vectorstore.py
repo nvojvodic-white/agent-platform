@@ -126,4 +126,12 @@ def get_retriever(k: int = 4, kind: str = "dense") -> BaseRetriever:
         from app.rag.retrieval.multi_query import get_multi_query_retriever
 
         return get_multi_query_retriever(k=k)
+    if kind == "pdr":
+        from app.rag.retrieval.pdr import get_pdr_retriever
+
+        return get_pdr_retriever(k=k)
+    if kind == "semantic":
+        from app.rag.retrieval.semantic import get_semantic_retriever
+
+        return get_semantic_retriever(k=k)
     return get_dense_retriever(k=k)

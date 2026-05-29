@@ -22,6 +22,10 @@ import json
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import OpenAIEmbeddings
+
+# Must run before importing ragas: shims the langchain_community.chat_models
+# .vertexai module that ragas 0.4.0 imports but community >= 0.4.2 removed.
+from app.rag.eval import _ragas_compat  # noqa: F401
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.llms import LangchainLLMWrapper

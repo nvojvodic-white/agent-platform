@@ -1,5 +1,64 @@
 # RAG findings
 
+## Day 9 — Chunk-granularity: parent-document retrieval & semantic chunking
+
+Tested whether changing what "a chunk" is can move the ~0.82 recall ceiling that
+Day 8's query transforms could not. Two chunk-axis interventions, both in separate
+Chroma collections (production `middle_earth` untouched):
+- **PDR** (`build_pdr_index.py`, `pdr.py`): 400-char children for embedding, 2000-char
+  parents for context (2340 parents / 12378 children, no article truncated). Retrieve
+  children, dedupe by parent_id, return top-k parents.
+- **Semantic** (`build_semantic_index.py`, `semantic.py`): the Day-2 deferred variant.
+  SemanticChunker splits at embedding-distance topic boundaries (2268 chunks, avg 1464
+  chars vs the recursive baseline's 800).
+
+Four-way RAGAS (mean over 7 probes, k=4; judge = Claude):
+
+| retriever | faithfulness | answer_relevancy | context_precision | context_recall |
+|---|---|---|---|---|
+| dense (baseline) | 0.949 | 0.801 | **0.881** | 0.821 |
+| pdr      | 0.958 | 0.840 | 0.873 | **0.595** |
+| semantic | **0.988** | 0.842 | 0.758 | **0.833** |
+
+**Answer to the substrate-ceiling question: granularity moves recall, but only a little,
+and not for free.** Semantic chunking is the only intervention all week to lift recall
+above dense (0.821 → 0.833) — and it specifically *fixed the two worst dense recall
+probes*: Mithril 0.33 → 1.0 and Bombadil 0.67 → 1.0. So the recall gaps on those probes
+were genuinely granularity-bound: the recursive 800-char splitter was cutting their facts
+across chunk boundaries, and topic-aligned chunks recovered them. But the recall lift is
+small in aggregate and **bought with precision**: semantic's context_precision fell
+0.881 → 0.758 (bigger topical chunks carry more off-target text; Battle of Five Armies
+precision cratered to 0.33). It's a precision/recall *trade*, not a free lift — which
+reads as "near the corpus-bound bottom" more than "granularity is the unlock."
+
+**PDR regressed recall hard (0.595, −0.23) — a real mechanism finding, not a bug.**
+Dedup-by-parent forces k *distinct* parents. When a probe's ground-truth facts are
+concentrated in one article (the common case here), dense returns 4 chunks all from that
+article, but PDR returns 4 different parents and diversifies *away* from the fact-dense
+one. Verified on the Dwarves probe: dense = [Dwarves×3, Dwarves-in-ME]; PDR = [Durin III,
+Seven Hoards of the Dwarf-kings, Dwarves, Dwarves] — it spent two of its four slots on
+tangential articles. PDR's diversification helps spread-out facts and hurts concentrated
+ones; this corpus has mostly concentrated facts, so PDR loses. (Mithril was the exception:
+PDR lifted it 0.33 → 0.67, because Mithril facts *were* split across parents.)
+
+**Faithfulness rose with chunk size** (dense 0.95 → pdr 0.96 → semantic 0.99): larger,
+more coherent chunks give the LLM more complete context, so it makes fewer unsupported
+claims. Monotonic with chunk size across all three — a clean secondary signal.
+
+**Decision:** dense stays the default. Neither intervention is a clear win: PDR loses on
+recall, semantic trades precision for a small recall gain. But semantic's targeted fix of
+the Mithril/Bombadil recall gaps is worth keeping available (`kind="semantic"`) and points
+at a possible Day 11+ refinement — a *hybrid of granularities* (semantic chunks for
+recall-hard entity probes, recursive for precision-sensitive event probes) rather than one
+global chunk size.
+
+**Dependency note:** ragas 0.4.0 top-level-imports `langchain_community.chat_models
+.vertexai.ChatVertexAI`, which community ≥0.4.2 removed — but langchain-experimental 0.4.2
+(needed for SemanticChunker) forces community ≥0.4.2. Resolved with a small compat shim
+(`app/rag/eval/_ragas_compat.py`) that stubs the dead import before ragas loads; ragas
+never instantiates ChatVertexAI under our Claude judge, so the stub is inert. requirements
+bumped: langchain-community 0.4.1→0.4.2, langchain-classic 1.0.0→1.0.7, +langchain-experimental 0.4.2.
+
 ## Day 8 — Query transformation: HyDE and Multi-Query
 
 Built two query-transformation retrievers and measured both with the Day 7 RAGAS harness:
