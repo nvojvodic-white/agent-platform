@@ -55,6 +55,10 @@ chromadb==1.5.9
 tiktoken==0.8.0
 rank_bm25==0.2.2
 
+# RAG evaluation (app/rag/eval/)
+ragas==0.4.0
+datasets==4.8.5
+
 # RAG ingestion (app/rag/ingestion/)
 requests==2.34.2
 beautifulsoup4==4.12.3

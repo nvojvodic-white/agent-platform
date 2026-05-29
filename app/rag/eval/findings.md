@@ -1,5 +1,56 @@
 # RAG findings
 
+## Day 7 — RAGAS automated eval (replaces Day 6 hand-scoring)
+
+Built `app/rag/eval/ragas_eval.py` (ragas 0.4.0; the plan's 0.2.6 pin conflicts with
+our langchain 1.x stack, so the harness uses the 0.4.0 `EvaluationDataset` /
+`SingleTurnSample` API). Judge = Claude (`claude-sonnet-4-5`, max_tokens 4096);
+embeddings = OpenAI `text-embedding-3-small`. Ground truths for all 7 in-corpus probes
+were written by hand against what the corpus actually supports (not the platonic Tolkien
+answer). Per-probe CSVs in `app/rag/eval/ragas_results/`.
+
+Mean scores (7 probes, k=4):
+
+| retriever | faithfulness | answer_relevancy | context_precision | context_recall |
+|---|---|---|---|---|
+| dense  | 0.913 | 0.803 | 0.881 | 0.821 |
+| sparse | 0.832 | 0.691 | 0.440 | 0.179 |
+| hybrid 50/50  | (deferred) | | | |
+| hybrid 40/60  | (deferred) | | | |
+
+**Quantified the Day 6 verdict:** dense beats sparse on every metric, decisively on the
+two retrieval metrics — context_precision 0.88 vs 0.44, context_recall 0.82 vs 0.18.
+Sparse's BM25 literalism (the Ori / Farmer Maggot noise seen by hand on Day 6) shows up
+as a precision/recall collapse; "What rings did the Dwarves get?" even scored
+answer_relevancy 0.0 under sparse because the retrieved chunks were too off-topic to
+support a relevant answer. This is the hand-scored Day 6 finding, now with numbers.
+
+**Faithfulness is high but not uniform.** Dense 0.91 — the strong prompt does most of the
+grounding work, a partial answer to the deferred Day 5 question. But it is not a flat
+1.0: the "Battle of Five Armies" probe scored 0.61 faithfulness under dense (the answer
+made battle-detail claims the retrieved chunks only partly support). So retrieval quality
+*does* interact with groundedness — subtler than the clean two-layer model.
+
+**The two context metrics surfaced real corpus-quality signals the eye missed:**
+- Mithril: context_recall 0.33 under dense. The answer is faithful, but the retrieved WP
+  Mithril chunks lean definitional (etymology/properties) and miss the Moria / Bilbo's-mail
+  facts in the ground truth. A recall gap on an otherwise "clean" probe.
+- Tom Bombadil (post Day-6.5 fix): recall 0.67, precision 0.92 under dense. The new
+  Wikipedia article supports most but not all canonical facts — the article isn't
+  maximally dense, exactly the test Day 6.5 set up.
+
+**Method caveats worth keeping:** (1) RAGAS judge scores are non-deterministic —
+faithfulness on the same dense run moved 0.938 → 0.913 across two runs, so treat sub-0.05
+differences as noise. (2) The judge initially truncated (NaN) at max_tokens 2048 on the
+Battle probe's claim decomposition; raised to 4096. (3) The hybrid 50/50 and 40/60 rows
+are DEFERRED: Anthropic was returning intermittent 500s (~1 in 3 calls) during this
+session, which killed both hybrid runs mid-evaluation. dense + sparse completed cleanly
+before the instability. Hybrid rows to be filled in when the API stabilizes; Day 6's
+hand-scored hybrid evidence (neutral-to-slightly-worse than dense) stands in the interim.
+
+**Net:** dense remains the default, now with a measured baseline that can be re-run in
+~2 min per retriever whenever anything downstream changes.
+
 ## Day 6 — Hybrid retrieval (BM25 + dense)
 
 Built a swappable retriever (`get_retriever(kind=dense|sparse|hybrid)`, EnsembleRetriever

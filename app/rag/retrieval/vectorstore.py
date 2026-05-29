@@ -108,9 +108,14 @@ def get_hybrid_retriever(
 
 
 def get_retriever(k: int = 4, kind: str = "dense") -> BaseRetriever:
-    """Swappable retriever factory. kind in {dense, sparse, hybrid}."""
+    """Swappable retriever factory.
+
+    kind in {dense, sparse, hybrid (50/50), hybrid_40_60}.
+    """
     if kind == "sparse":
         return get_sparse_retriever(k=k)
     if kind == "hybrid":
-        return get_hybrid_retriever(k=k)
+        return get_hybrid_retriever(k=k, dense_weight=0.5, sparse_weight=0.5)
+    if kind == "hybrid_40_60":
+        return get_hybrid_retriever(k=k, dense_weight=0.4, sparse_weight=0.6)
     return get_dense_retriever(k=k)
