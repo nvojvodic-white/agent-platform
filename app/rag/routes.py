@@ -1,12 +1,28 @@
+import json
+
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 from app.rag.agent.graph import get_agent
+from app.rag.agent.graph_streaming import (
+    get_streaming_agent,
+    synthesize_streaming,
+)
 from app.rag.chain.rag_chain import build_chain
 from app.rag.schemas import QueryRequest, QueryResponse, Source
 
 router = APIRouter()
 
 SNIPPET_CHARS = 200
+
+
+def _sse(payload: dict) -> str:
+    """Format a payload as a Server-Sent Events frame.
+
+    The trailing double-newline is required by the SSE protocol; without it
+    browsers / clients will not flush the event.
+    """
+    return f"data: {json.dumps(payload)}\n\n"
 
 
 def _snippet(text: str) -> str:
@@ -58,6 +74,60 @@ def agent_query(req: QueryRequest) -> QueryResponse:
         sources=sources,
         retrieved_chunks=len(docs),
     )
+
+
+@router.post("/agent_query_stream")
+async def agent_query_stream(req: QueryRequest) -> StreamingResponse:
+    """Streaming variant of /agent_query.
+
+    Two-phase: (1) run the streaming graph to completion (classify, retrieve,
+    grade, optionally rewrite + retry once) and emit a single metadata frame
+    with the route, grade, trace, and sources; (2) stream synthesis tokens as
+    they arrive from Claude. Closes with a `done` frame.
+
+    Frames are Server-Sent Events: `data: {json}\\n\\n`. Use with curl -N or a
+    browser EventSource / fetch+ReadableStream client.
+
+    NOTE: the non-streaming /agent_query is preserved byte-identical so RAGAS,
+    the Day-11 agent probes, and any A/B caller continue to work.
+    """
+    streaming_agent = get_streaming_agent()
+
+    async def event_stream():
+        try:
+            state = await streaming_agent.ainvoke({"question": req.question})
+        except Exception as e:
+            yield _sse({"type": "error", "message": f"agent failed: {e}"})
+            yield _sse({"type": "done"})
+            return
+
+        docs = state.get("documents", [])
+        yield _sse(
+            {
+                "type": "metadata",
+                "route": state.get("route"),
+                "grade": state.get("grade"),
+                "attempt": state.get("attempt"),
+                "trace": state.get("trace", []),
+                "sources": [
+                    {
+                        "title": d.metadata.get("title", "Unknown"),
+                        "url": d.metadata.get("url", ""),
+                        "source": d.metadata.get("source", "unknown"),
+                        "snippet": _snippet(d.page_content),
+                    }
+                    for d in docs
+                ],
+                "retrieved_chunks": len(docs),
+            }
+        )
+
+        async for event in synthesize_streaming(state):
+            yield _sse(event)
+
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/agent_query_debug")

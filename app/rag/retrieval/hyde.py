@@ -10,7 +10,10 @@ answer-shaped semantic content to match against.
 from functools import lru_cache
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.callbacks import (
+    AsyncCallbackManagerForRetrieverRun,
+    CallbackManagerForRetrieverRun,
+)
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -51,6 +54,14 @@ class HyDERetriever(BaseRetriever):
     ) -> list[Document]:
         hypothetical = _hyde_chain().invoke({"question": query})
         return get_vectorstore().similarity_search(hypothetical, k=self.k)
+
+    async def _aget_relevant_documents(
+        self, query: str, *, run_manager: AsyncCallbackManagerForRetrieverRun
+    ) -> list[Document]:
+        # Streaming-path version: never block the event loop on either the
+        # hypothetical-generation LLM call or the Chroma query.
+        hypothetical = await _hyde_chain().ainvoke({"question": query})
+        return await get_vectorstore().asimilarity_search(hypothetical, k=self.k)
 
 
 def get_hyde_retriever(k: int = 4) -> HyDERetriever:

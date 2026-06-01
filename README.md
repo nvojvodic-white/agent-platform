@@ -98,7 +98,19 @@ End-to-end agent latency was measured per-node on Day 12 via a `@timed` decorato
 | synthesize | ~7000 | Claude call, ~1KB output |
 | **total** | **~14000** | end-to-end per query, cold |
 
-`@lru_cache(256)` on `(question, route, k)` makes warm-pass retrieval cost zero. Worth ~5-6s on HyDE-routed probes (Smaug 14.8 to 9.8 seconds); negligible on dense routes (already 260ms). Streaming via `langgraph.astream` + FastAPI `StreamingResponse` and semantic-similarity caching are both deferred (cost-aware, see below).
+`@lru_cache(256)` on `(question, route, k)` makes warm-pass retrieval cost zero. Worth ~5-6s on HyDE-routed probes (Smaug 14.8 to 9.8 seconds); negligible on dense routes (already 260ms). Semantic-similarity caching is deferred (exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches; worth revisiting under production traffic).
+
+### Streaming endpoint
+
+A parallel async path at `POST /api/v1/rag/agent_query_stream` returns Server-Sent Events: a single `metadata` frame (route, grade, trace, sources) emitted before the LLM starts streaming, then `token` frames yielded as Claude generates, then `answer_complete` (full text for downstream consumers), then `done`. Total end-to-end latency is unchanged (~14s cold) but time-to-first-byte drops to ~5s (classify + retrieve + grade), and the UI gets the route + sources at t=0 to fill the synthesize gap.
+
+Implementation lives in `app/rag/agent/graph_streaming.py`: async versions of the four orchestration nodes (`aclassify_query`, `aretrieve`, `agrade_documents`, `arewrite_query`) plus `synthesize_streaming` as an async generator that runs *outside* the compiled graph (graphs return state, not streams). The non-streaming `build_agent()` / `/agent_query` / `/agent_query_debug` paths are preserved byte-identical so RAGAS, the Day-11 probe sweep, and any A/B caller continue to work.
+
+```bash
+curl -N -X POST localhost:8000/api/v1/rag/agent_query_stream \
+  -H 'content-type: application/json' \
+  -d '{"question":"Who killed Smaug?"}'
+```
 
 ### Eval harness
 
@@ -115,7 +127,6 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 ### What's not here, and why
 
 - **RAGAS over the routing agent endpoint.** Each agent invocation is 3 to 4 Claude calls before RAGAS adds its own judge calls; a full `--n-runs=3` over 7 probes against the agent costs several dollars. Deferred to end-of-project; the routing decision quality is measured separately via classifier accuracy in `app/rag/eval/run_agent_v2_probes.py`.
-- **Streaming the agent response.** A 1 to 2 hour refactor (async-all-the-way-down, `StreamingResponse`, `langgraph.astream`) that buys time-to-first-byte UX without changing measured quality. Skipped for the portfolio cut.
 - **Conversation memory.** Each query is stateless. Adding multi-turn memory would expand state shape and require eviction policy; out of scope.
 - **Semantic caching.** Considered for the retrieval cache and rejected: exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches. Worth revisiting under production traffic.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
