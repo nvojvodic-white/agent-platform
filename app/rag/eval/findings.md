@@ -1,5 +1,68 @@
 # RAG findings
 
+## Day 11 — LangGraph routing agent
+
+Built a LangGraph state machine in `app/rag/agent/graph.py` that classifies each
+question into `definitional` / `multi_hop` / `general` and routes to the
+retriever each class wins on per Days 7-9 (semantic / hyde / dense). The graph
+also grades retrieved docs and can rewrite + retry once on a `poor` grade.
+Exposed as `/api/v1/rag/agent_query` (production) and `/api/v1/rag/agent_query_debug`
+(returns route, grade, attempt, trace). RAGAS deferred to end-of-project to save
+cost; today's measurement is the routing layer itself.
+
+**7-probe sweep against `/agent_query_debug`** (`run_agent_v2_probes.py`):
+
+| probe | expected (plan) | got | match | grade | attempts |
+|---|---|---|---|---|---|
+| Who is Gandalf? | definitional | definitional | ✓ | partial | 1 |
+| Who killed Smaug? | multi_hop | multi_hop | ✓ | relevant | 1 |
+| What rings did the Dwarves get? | multi_hop | multi_hop | ✓ | relevant | 1 |
+| Battle of Five Armies | general | general | ✓ | partial | 1 |
+| Beren and Lúthien | general | **definitional** | ✗ | relevant | 1 |
+| What is mithril? | definitional | definitional | ✓ | relevant | 1 |
+| Tom Bombadil | definitional | definitional | ✓ | partial | 1 |
+
+**Classifier match: 6/7 (86%) against the plan's hypothesis.** Grades: 4 relevant
+/ 3 partial / 0 poor. **Zero retries triggered** — the design's "retry only on
+`poor`, not on `partial`" decision means the agent commits to synthesis whenever
+the grader is at least lukewarm. That's a deliberate tradeoff; a more aggressive
+retry policy could lift quality at meaningful cost.
+
+**Beren & Lúthien is the only "miss" — and the plan's expectation is the part
+that's wrong.** My Hour 1 pre-registered prediction was `definitional` for that
+probe (a request to identify two specific entities), which is what the
+classifier chose. The plan's table had `general`. The classifier's reasoning
+("requesting concise information about who they are") is sound, and semantic
+retrieved 4 strong Lúthien chunks graded `relevant`. So this is the classifier
+agreeing with my prior, not with the plan's prior — a useful reminder that the
+expected-routes table is a hypothesis, not ground truth.
+
+**Two qualitative wins from per-query routing that the prior single-retriever
+runs left on the table:**
+- *Smaug → multi_hop → hyde*: hyde surfaced `Destruction of Lake-town` at rank 1
+  (the Day 8 hyde-only precision win), and the grader returned `relevant` first
+  try. Dense never reached that chunk; the agent picked the right tool
+  automatically.
+- *Dwarves → multi_hop → hyde*: on Day 6 hyde+sparse hybrids regressed this
+  probe via BM25 noise (Ori / Farmer Maggot); standalone hyde on Day 8 was
+  fine; the agent now selectively *uses* hyde here. This is the per-query
+  routing extracting Day 8 wins without paying Day 6's hybrid-tail precision
+  cost.
+
+**Three `partial` grades worth noting** (Gandalf, Battle, Bombadil): all three
+were graded `partial` not `poor`, so the no-retry-on-partial policy held. But
+the grader's reasoning was honest in each case ("don't directly explain who or
+what Gandalf fundamentally is", "lack comprehensive details about the battle's
+causes/progression", "retrieved text is fragmented"). Those are real
+sub-ceiling observations the grader is correctly surfacing — and a future
+refinement could be a `partial`-with-rewrite policy on probes where the answer
+might still improve, paid in extra LLM calls.
+
+**Net:** the routing layer works as designed. The classifier is reliable
+(6/7, only "miss" is the plan's hypothesis being wrong, not the classifier).
+The grader is honest and inspectable. End-to-end RAGAS quality vs single
+retrievers is deferred to end-of-project to manage cost.
+
 ## Day 9 — Chunk-granularity: parent-document retrieval & semantic chunking
 
 Tested whether changing what "a chunk" is can move the ~0.82 recall ceiling that

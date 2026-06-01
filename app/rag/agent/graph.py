@@ -1,0 +1,272 @@
+"""Routing RAG agent built with LangGraph.
+
+Tests the thesis question Day 11 sets up: can measured query-conditional
+routing beat the best single retriever? The routing table is grounded in Day
+7-9 evidence:
+  definitional -> semantic  (lifts recall on Mithril/Bombadil)
+  multi_hop    -> hyde      (precision lift on Smaug-class queries)
+  general      -> dense     (the strong baseline)
+
+Graph:
+  START -> classify_query -> retrieve -> grade_documents -> decide_next
+                                ^                              |
+                                +--- rewrite_query <- [poor & attempt<1]
+                                                               |
+                                                      [good or attempt>=1]
+                                                               v
+                                                          synthesize -> END
+"""
+from operator import add
+from typing import Annotated, Literal, TypedDict
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.documents import Document
+from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, Field
+
+from app.rag.chain.prompts import rag_prompt
+from app.rag.retrieval.vectorstore import get_retriever
+
+Route = Literal["definitional", "multi_hop", "general"]
+Grade = Literal["relevant", "partial", "poor"]
+
+
+class AgentState(TypedDict, total=False):
+    question: str
+    route: Route
+    rewritten_question: str | None
+    documents: list[Document]
+    attempt: int
+    grade: Grade
+    answer: str
+    trace: Annotated[list[str], add]
+
+
+ROUTE_TO_RETRIEVER: dict[Route, str] = {
+    "definitional": "semantic",
+    "multi_hop": "hyde",
+    "general": "dense",
+}
+
+
+# --- classify ---------------------------------------------------------------
+
+classifier_llm = ChatAnthropic(
+    model="claude-sonnet-4-5", max_tokens=200, max_retries=5
+)
+
+
+class Classification(BaseModel):
+    route: Route = Field(description="One of: definitional, multi_hop, general")
+    reasoning: str = Field(description="One sentence explaining the choice")
+
+
+classify_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "Classify the user's question about Middle-earth into exactly one "
+            "retrieval route:\n\n"
+            "- `definitional`: asks what/who something is, requesting a concise "
+            "description of a single entity, place, object, or concept. "
+            "Examples: 'What is mithril?', 'Who is Tom Bombadil?'\n"
+            "- `multi_hop`: the answer requires connecting entities or facts not "
+            "present in the question. Examples: 'Who killed Smaug?' (answer is "
+            "Bard, not in question), 'What rings did the Dwarves get?'\n"
+            "- `general`: everything else - narratives, events, comparisons, "
+            "broad surveys. Examples: 'Tell me about the Battle of Five Armies', "
+            "'Describe Aragorn's role in the War'\n\n"
+            "Reply with JSON: {{\"route\": <one of above>, \"reasoning\": <one sentence>}}",
+        ),
+        ("human", "{question}"),
+    ]
+)
+
+
+def classify_query(state: AgentState) -> dict:
+    parser = PydanticOutputParser(pydantic_object=Classification)
+    chain = classify_prompt | classifier_llm | parser
+    try:
+        result = chain.invoke({"question": state["question"]})
+        return {
+            "route": result.route,
+            "attempt": 0,
+            "trace": [f"classified as {result.route}: {result.reasoning}"],
+        }
+    except Exception as e:
+        return {
+            "route": "general",
+            "attempt": 0,
+            "trace": [f"classification failed ({e}); defaulting to general"],
+        }
+
+
+# --- retrieve ---------------------------------------------------------------
+
+def retrieve(state: AgentState) -> dict:
+    route = state["route"]
+    question = state.get("rewritten_question") or state["question"]
+    retriever_kind = ROUTE_TO_RETRIEVER[route]
+    retriever = get_retriever(k=4, kind=retriever_kind)
+    docs = retriever.invoke(question)
+    return {
+        "documents": docs,
+        "trace": [
+            f"retrieved {len(docs)} docs via {retriever_kind} "
+            f"(attempt {state.get('attempt', 0) + 1})"
+        ],
+    }
+
+
+# --- grade ------------------------------------------------------------------
+
+grade_llm = ChatAnthropic(
+    model="claude-sonnet-4-5", max_tokens=300, max_retries=5
+)
+
+
+class GradeOutput(BaseModel):
+    grade: Grade
+    reasoning: str
+
+
+grade_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You are evaluating whether retrieved passages can answer a question. "
+            "Grade the retrieval:\n\n"
+            "- `relevant`: passages directly contain the information needed to answer.\n"
+            "- `partial`: passages touch on the topic but lack key facts; an answer "
+            "would be incomplete.\n"
+            "- `poor`: passages are off-topic or irrelevant; the question cannot be "
+            "answered from them.\n\n"
+            "Be honest. A confident `poor` grade is more useful than a hopeful "
+            "`relevant`.\n\n"
+            "Reply with JSON: {{\"grade\": <one of above>, \"reasoning\": <one sentence>}}",
+        ),
+        (
+            "human",
+            "Question: {question}\n\nRetrieved passages:\n{passages}\n\nGrade:",
+        ),
+    ]
+)
+
+
+def grade_documents(state: AgentState) -> dict:
+    parser = PydanticOutputParser(pydantic_object=GradeOutput)
+    chain = grade_prompt | grade_llm | parser
+    passages = "\n\n---\n\n".join(
+        f"[{i}] {d.metadata.get('title', '?')}\n{d.page_content[:500]}"
+        for i, d in enumerate(state["documents"], 1)
+    )
+    try:
+        result = chain.invoke(
+            {"question": state["question"], "passages": passages}
+        )
+        return {
+            "grade": result.grade,
+            "trace": [f"graded {result.grade}: {result.reasoning}"],
+        }
+    except Exception as e:
+        return {
+            "grade": "partial",
+            "trace": [f"grading failed ({e}); defaulted to partial"],
+        }
+
+
+# --- rewrite ----------------------------------------------------------------
+
+rewrite_llm = ChatAnthropic(
+    model="claude-sonnet-4-5", max_tokens=200, max_retries=5
+)
+
+rewrite_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "The user asked a question and our first retrieval attempt returned "
+            "poor passages. Rewrite the question to improve retrieval - be more "
+            "specific, use synonyms for rare terms, add likely context words. "
+            "Output only the rewritten question, no preamble.",
+        ),
+        ("human", "Original question: {question}\n\nRewritten question:"),
+    ]
+)
+
+
+def rewrite_query(state: AgentState) -> dict:
+    chain = rewrite_prompt | rewrite_llm | StrOutputParser()
+    rewritten = chain.invoke({"question": state["question"]}).strip()
+    return {
+        "rewritten_question": rewritten,
+        "attempt": state.get("attempt", 0) + 1,
+        "trace": [f"rewrote to: {rewritten}"],
+    }
+
+
+# --- synthesize -------------------------------------------------------------
+
+synth_llm = ChatAnthropic(
+    model="claude-sonnet-4-5", max_tokens=1024, max_retries=5
+)
+
+
+def synthesize(state: AgentState) -> dict:
+    context = "\n\n---\n\n".join(
+        f"[{i}] {d.metadata.get('title', '?')}\n{d.page_content}"
+        for i, d in enumerate(state["documents"], 1)
+    )
+    chain = rag_prompt | synth_llm | StrOutputParser()
+    answer = chain.invoke({"context": context, "question": state["question"]})
+    return {
+        "answer": answer,
+        "trace": [f"synthesized answer ({len(answer)} chars)"],
+    }
+
+
+# --- conditional edge -------------------------------------------------------
+
+def decide_next(state: AgentState) -> str:
+    grade = state.get("grade", "partial")
+    attempt = state.get("attempt", 0)
+    if grade == "relevant":
+        return "synthesize"
+    if grade == "poor" and attempt < 1:
+        return "rewrite_query"
+    return "synthesize"
+
+
+# --- compile ----------------------------------------------------------------
+
+def build_agent():
+    g = StateGraph(AgentState)
+    g.add_node("classify_query", classify_query)
+    g.add_node("retrieve", retrieve)
+    g.add_node("grade_documents", grade_documents)
+    g.add_node("rewrite_query", rewrite_query)
+    g.add_node("synthesize", synthesize)
+
+    g.add_edge(START, "classify_query")
+    g.add_edge("classify_query", "retrieve")
+    g.add_edge("retrieve", "grade_documents")
+    g.add_conditional_edges(
+        "grade_documents",
+        decide_next,
+        {"synthesize": "synthesize", "rewrite_query": "rewrite_query"},
+    )
+    g.add_edge("rewrite_query", "retrieve")
+    g.add_edge("synthesize", END)
+    return g.compile()
+
+
+_agent = None
+
+
+def get_agent():
+    global _agent
+    if _agent is None:
+        _agent = build_agent()
+    return _agent
