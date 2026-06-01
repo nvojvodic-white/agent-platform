@@ -60,6 +60,17 @@ Grade = Literal["relevant", "partial", "poor"]
 
 class AgentState(TypedDict, total=False):
     question: str
+    # Day 14: post-coreference rewrite of `question` for multi-turn. Set by
+    # resolve_query in graph_streaming. Downstream nodes read
+    # state.get("resolved_question") or state["question"], so paths without
+    # memory keep working byte-identically.
+    resolved_question: str
+    # Day 14: optional list of {"role": "user"|"assistant", "content": str}
+    # carried into synthesis as conversation context.
+    history: list[dict]
+    # Day 14: opaque caller-provided session id. Only used to scope memory
+    # reads/writes in the endpoint; the graph itself does not read it.
+    session_id: str | None
     route: Route
     rewritten_question: str | None
     documents: list[Document]

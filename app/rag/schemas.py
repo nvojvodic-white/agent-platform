@@ -6,6 +6,15 @@ class QueryRequest(BaseModel):
     k: int = Field(default=4, ge=1, le=20)
 
 
+class StreamQueryRequest(BaseModel):
+    """Request shape for /agent_query_stream_v2. session_id is optional; when
+    absent the endpoint behaves like /agent_query_stream (no memory)."""
+
+    question: str = Field(..., min_length=1, max_length=500)
+    session_id: str | None = Field(default=None, max_length=128)
+    k: int = Field(default=4, ge=1, le=20)
+
+
 class Source(BaseModel):
     title: str
     url: str

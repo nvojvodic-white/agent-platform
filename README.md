@@ -112,6 +112,28 @@ curl -N -X POST localhost:8000/api/v1/rag/agent_query_stream \
   -d '{"question":"Who killed Smaug?"}'
 ```
 
+### Multi-turn (memory + coref)
+
+`POST /api/v1/rag/agent_query_stream_v2` accepts an optional `session_id`. When present, the endpoint loads the last 6 conversation turns from a SQLite store (`data/conversations.db`, path overridable via `CONV_DB_PATH`), runs a coreference-resolve node at the front of the graph to rewrite the question into a self-contained form, then synthesises with the history threaded into the prompt. The synthesis prompt carries one extra rule for the multi-turn case: prior turns establish what was *discussed*, not what is *true*, so factual claims still have to come from the retrieved context, not from earlier assistant answers.
+
+Three details worth knowing:
+- The coref rewriter is instructed to return the question VERBATIM if it is already self-contained. The smoke test confirms this guard: `"What is mithril?"` comes back unchanged, not paraphrased.
+- The user's turn is persisted *before* the LLM runs (so mid-stream errors do not lose it); the assistant's turn is persisted only after `answer_complete`. A half-streamed answer is not safe to save.
+- `DELETE /api/v1/rag/sessions/{session_id}` clears a conversation.
+
+Smoke example (pronoun chain that resolves Smaug → Bard → weapon):
+
+```bash
+SID=demo-$(date +%s)
+for q in "Who is Smaug?" "Who killed him?" "With what weapon?"; do
+  curl -N -X POST localhost:8000/api/v1/rag/agent_query_stream_v2 \
+    -H 'content-type: application/json' \
+    -d "{\"session_id\":\"$SID\",\"question\":\"$q\"}"
+done
+```
+
+In the smoke run: turn 2 (`Who killed him?`) resolves to `Who killed Smaug?` and the classifier flips the route from `definitional` to `multi_hop`, which routes to HyDE (the Day-8 measured winner for this question shape). Memory + routing-by-question-type compose: the pronoun resolution is what makes the route flip even possible.
+
 ### Eval harness
 
 Repeatable measurement across all retrievers:
@@ -127,7 +149,6 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 ### What's not here, and why
 
 - **RAGAS over the routing agent endpoint.** Each agent invocation is 3 to 4 Claude calls before RAGAS adds its own judge calls; a full `--n-runs=3` over 7 probes against the agent costs several dollars. Deferred to end-of-project; the routing decision quality is measured separately via classifier accuracy in `app/rag/eval/run_agent_v2_probes.py`.
-- **Conversation memory.** Each query is stateless. Adding multi-turn memory would expand state shape and require eviction policy; out of scope.
 - **Semantic caching.** Considered for the retrieval cache and rejected: exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches. Worth revisiting under production traffic.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
 - **Tolkien Gateway corpus.** The original plan called for Tolkien Gateway (the canonical fan wiki) as the primary source. It blocks this network with HTTP 403 on every request. Fell back to Fandom LotR wiki + Wikipedia, per source tag in chunk metadata.

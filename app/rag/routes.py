@@ -6,10 +6,19 @@ from fastapi.responses import StreamingResponse
 from app.rag.agent.graph import get_agent
 from app.rag.agent.graph_streaming import (
     get_streaming_agent,
+    get_streaming_agent_with_memory,
     synthesize_streaming,
 )
 from app.rag.chain.rag_chain import build_chain
-from app.rag.schemas import QueryRequest, QueryResponse, Source
+from app.rag.memory.store import append_turn, clear_session, get_recent_turns
+from app.rag.schemas import (
+    QueryRequest,
+    QueryResponse,
+    Source,
+    StreamQueryRequest,
+)
+
+MEMORY_WINDOW_SIZE = 6  # last 6 turns = 3 user/assistant pairs
 
 router = APIRouter()
 
@@ -128,6 +137,95 @@ async def agent_query_stream(req: QueryRequest) -> StreamingResponse:
         yield _sse({"type": "done"})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/agent_query_stream_v2")
+async def agent_query_stream_v2(req: StreamQueryRequest) -> StreamingResponse:
+    """Multi-turn streaming variant. When session_id is provided, loads the
+    last MEMORY_WINDOW_SIZE turns from the SQLite conversation store, runs the
+    coref-resolve -> classify -> retrieve -> grade -> [rewrite] graph, then
+    streams synthesis with conversation history threaded into the prompt. The
+    user's turn is persisted BEFORE the LLM runs (so it survives mid-stream
+    errors); the assistant's turn is persisted only after answer_complete fires
+    (a half-streamed answer is not safe to save).
+
+    When session_id is None the endpoint degrades to single-turn behaviour
+    identical to /agent_query_stream, just routed through the with-memory
+    graph (resolve_query short-circuits when history is empty).
+    """
+    agent = get_streaming_agent_with_memory()
+    session_id = req.session_id
+
+    history: list[dict] = []
+    if session_id:
+        turns = get_recent_turns(session_id, n=MEMORY_WINDOW_SIZE)
+        history = [t.to_dict() for t in turns]
+
+    async def event_stream():
+        # Persist the user turn FIRST so we keep it on mid-stream failure.
+        if session_id:
+            append_turn(session_id, "user", req.question)
+
+        try:
+            state = await agent.ainvoke(
+                {
+                    "question": req.question,
+                    "history": history,
+                    "session_id": session_id,
+                }
+            )
+        except Exception as e:
+            yield _sse({"type": "error", "message": f"agent failed: {e}"})
+            yield _sse({"type": "done"})
+            return
+
+        docs = state.get("documents", [])
+        yield _sse(
+            {
+                "type": "metadata",
+                "session_id": session_id,
+                "resolved_question": state.get("resolved_question"),
+                "route": state.get("route"),
+                "grade": state.get("grade"),
+                "attempt": state.get("attempt"),
+                "trace": state.get("trace", []),
+                "sources": [
+                    {
+                        "title": d.metadata.get("title", "Unknown"),
+                        "url": d.metadata.get("url", ""),
+                        "source": d.metadata.get("source", "unknown"),
+                        "snippet": _snippet(d.page_content),
+                    }
+                    for d in docs
+                ],
+                "retrieved_chunks": len(docs),
+                "history_turns_loaded": len(history),
+            }
+        )
+
+        # Stream synthesis; accumulate parts for the assistant-turn persist.
+        full_answer_parts: list[str] = []
+        async for event in synthesize_streaming(state):
+            if event.get("type") == "token":
+                full_answer_parts.append(event.get("content", ""))
+            yield _sse(event)
+
+        # Persist assistant turn ONLY after a complete answer; a half-streamed
+        # answer corrupted by an error frame is not safe to save.
+        full_answer = "".join(full_answer_parts)
+        if session_id and full_answer:
+            append_turn(session_id, "assistant", full_answer)
+
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.delete("/sessions/{session_id}")
+def clear_session_endpoint(session_id: str) -> dict:
+    """Clear all conversation turns for a session. Returns rows removed."""
+    removed = clear_session(session_id)
+    return {"session_id": session_id, "turns_removed": removed}
 
 
 @router.post("/agent_query_debug")

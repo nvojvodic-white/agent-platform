@@ -31,6 +31,7 @@ from collections.abc import AsyncIterator
 from langchain_core.output_parsers import PydanticOutputParser, StrOutputParser
 from langgraph.graph import END, START, StateGraph
 
+from app.rag.agent.coref import resolve_coreferences
 from app.rag.agent.graph import (
     AgentState,
     Classification,
@@ -46,7 +47,19 @@ from app.rag.agent.graph import (
     rewrite_prompt,
     synth_llm,
 )
+from app.rag.chain.prompts import rag_prompt_with_history
 from app.rag.retrieval.vectorstore import get_retriever
+
+
+def _active_question(state: AgentState) -> str:
+    """The question the graph should retrieve/synthesize on.
+
+    Prefers resolved_question (post-coref) when present; falls back to the
+    original. This makes the same node bodies work for both
+    build_streaming_agent (no memory, resolved_question never set) and
+    build_streaming_agent_with_memory (resolve_query sets it).
+    """
+    return state.get("resolved_question") or state["question"]
 
 
 # --- async nodes ------------------------------------------------------------
@@ -56,7 +69,7 @@ async def aclassify_query(state: AgentState) -> dict:
     parser = PydanticOutputParser(pydantic_object=Classification)
     chain = classify_prompt | classifier_llm | parser
     try:
-        result = await chain.ainvoke({"question": state["question"]})
+        result = await chain.ainvoke({"question": _active_question(state)})
         return {
             "route": result.route,
             "attempt": 0,
@@ -72,7 +85,10 @@ async def aclassify_query(state: AgentState) -> dict:
 
 async def aretrieve(state: AgentState) -> dict:
     route = state["route"]
-    question = state.get("rewritten_question") or state["question"]
+    # Priority: rewrite-loop output > coref-resolved > original. The rewrite
+    # retry happens within the graph; coref happens before classify; either or
+    # neither may be set.
+    question = state.get("rewritten_question") or _active_question(state)
     retriever_kind = ROUTE_TO_RETRIEVER[route]
     retriever = get_retriever(k=4, kind=retriever_kind)
     docs = await retriever.ainvoke(question)
@@ -94,7 +110,7 @@ async def agrade_documents(state: AgentState) -> dict:
     )
     try:
         result = await chain.ainvoke(
-            {"question": state["question"], "passages": passages}
+            {"question": _active_question(state), "passages": passages}
         )
         return {
             "grade": result.grade,
@@ -109,7 +125,9 @@ async def agrade_documents(state: AgentState) -> dict:
 
 async def arewrite_query(state: AgentState) -> dict:
     chain = rewrite_prompt | rewrite_llm | StrOutputParser()
-    rewritten = (await chain.ainvoke({"question": state["question"]})).strip()
+    rewritten = (
+        await chain.ainvoke({"question": _active_question(state)})
+    ).strip()
     return {
         "rewritten_question": rewritten,
         "attempt": state.get("attempt", 0) + 1,
@@ -130,17 +148,35 @@ async def synthesize_streaming(state: AgentState) -> AsyncIterator[dict]:
       - {"type": "error", "message": "<...>"}: emitted if the LLM call fails
         partway through (the HTTP 200 was already sent, so error must travel
         in-band).
+
+    When state carries non-empty `history`, switches to rag_prompt_with_history
+    so the synthesis prompt includes the conversation-as-context rule (prior
+    turns are NOT facts to be re-cited).
     """
     context = "\n\n---\n\n".join(
         f"[{i}] {d.metadata.get('title', '?')}\n{d.page_content}"
         for i, d in enumerate(state.get("documents", []), 1)
     )
-    chain = rag_prompt | synth_llm | StrOutputParser()
+    history = state.get("history") or []
+    question = _active_question(state)
+
+    if history:
+        history_text = "\n".join(
+            f"{t['role'].title()}: {t['content']}" for t in history
+        )
+        chain = rag_prompt_with_history | synth_llm | StrOutputParser()
+        prompt_inputs = {
+            "context": context,
+            "question": question,
+            "history": history_text,
+        }
+    else:
+        chain = rag_prompt | synth_llm | StrOutputParser()
+        prompt_inputs = {"context": context, "question": question}
+
     parts: list[str] = []
     try:
-        async for chunk in chain.astream(
-            {"context": context, "question": state["question"]}
-        ):
+        async for chunk in chain.astream(prompt_inputs):
             parts.append(chunk)
             yield {"type": "token", "content": chunk}
     except Exception as e:
@@ -192,3 +228,66 @@ def get_streaming_agent():
     if _streaming_agent is None:
         _streaming_agent = build_streaming_agent()
     return _streaming_agent
+
+
+# --- multi-turn variant (Day 14) --------------------------------------------
+
+
+async def aresolve_query(state: AgentState) -> dict:
+    """Coreference-resolve the question against prior history.
+
+    No-op when state has no history (the call still runs but is a cheap
+    string copy, not an LLM call). Sets state["resolved_question"]; every
+    downstream node reads via _active_question() which prefers it.
+    """
+    history = state.get("history") or []
+    if not history:
+        return {
+            "resolved_question": state["question"],
+            "trace": ["no history, skipping coref"],
+        }
+    resolved = await resolve_coreferences(state["question"], history)
+    return {
+        "resolved_question": resolved,
+        "trace": [f"resolved: {state['question']!r} -> {resolved!r}"],
+    }
+
+
+def build_streaming_agent_with_memory():
+    """Streaming agent with a coref-resolve node at the front.
+
+    Same as build_streaming_agent except:
+      - resolve_query runs first; every downstream node uses
+        state["resolved_question"] (via _active_question fallback).
+      - Caller is expected to pass state["history"] when there's prior
+        conversation. The graph itself never reads state["session_id"]; the
+        endpoint scopes memory reads/writes by session_id.
+    """
+    g = StateGraph(AgentState)
+    g.add_node("resolve_query", aresolve_query)
+    g.add_node("classify_query", aclassify_query)
+    g.add_node("retrieve", aretrieve)
+    g.add_node("grade_documents", agrade_documents)
+    g.add_node("rewrite_query", arewrite_query)
+
+    g.add_edge(START, "resolve_query")
+    g.add_edge("resolve_query", "classify_query")
+    g.add_edge("classify_query", "retrieve")
+    g.add_edge("retrieve", "grade_documents")
+    g.add_conditional_edges(
+        "grade_documents",
+        decide_next,
+        {"synthesize": END, "rewrite_query": "rewrite_query"},
+    )
+    g.add_edge("rewrite_query", "retrieve")
+    return g.compile()
+
+
+_streaming_agent_with_memory = None
+
+
+def get_streaming_agent_with_memory():
+    global _streaming_agent_with_memory
+    if _streaming_agent_with_memory is None:
+        _streaming_agent_with_memory = build_streaming_agent_with_memory()
+    return _streaming_agent_with_memory

@@ -23,3 +23,33 @@ rag_prompt = ChatPromptTemplate.from_messages(
         ("human", USER),
     ]
 )
+
+
+# Multi-turn variant. Adds one critical rule: "prior turns establish what was
+# discussed, not what is true." Without it the model will cite earlier assistant
+# answers as if they were retrieved context; those turns were grounded at the
+# time but are not the current context and should not be re-cited.
+SYSTEM_WITH_HISTORY = (
+    SYSTEM
+    + "\n7. Conversation history may be provided for tone and continuity, but "
+    "ALL factual claims must come from the retrieved context, not from earlier "
+    "turns of the conversation. The prior turns establish what was discussed, "
+    "not what is true. Do not cite earlier turns as if they were retrieved sources."
+)
+
+USER_WITH_HISTORY = """Conversation so far:
+{history}
+
+Context:
+{context}
+
+Question: {question}
+
+Answer (with inline [n] citations):"""
+
+rag_prompt_with_history = ChatPromptTemplate.from_messages(
+    [
+        ("system", SYSTEM_WITH_HISTORY),
+        ("human", USER_WITH_HISTORY),
+    ]
+)
