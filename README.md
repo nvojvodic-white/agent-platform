@@ -1,22 +1,191 @@
 # Agent Platform
 
-A self-hosted platform for running and observing Claude-powered AI agents. Built with FastAPI, deployed on Kubernetes via Helm, with full observability through OpenTelemetry, Jaeger, Prometheus, and Grafana.
+A self-hosted Claude-powered platform with two halves that share one FastAPI service:
 
-## What this demonstrates
+1. **Measured Agentic RAG** (`app/rag/`): a Middle-earth lore RAG with a LangGraph routing agent. Each query is classified and dispatched to the retriever measured to perform best on that question shape (semantic for definitional, HyDE for multi-hop, dense for general), graded for relevance, and optionally retried. Built over 12 days of measured iteration with RAGAS scores at every step.
+2. **Production platform** (`app/agent/`, `app/tools/`, `app/observability/`, `helm/`, `k8s/`, `.github/`): the original multi-turn Claude tool-use agent with OpenTelemetry tracing, Prometheus metrics, Grafana dashboards, Kubernetes deployment via Helm, and a React UI.
 
-This project is a portfolio demonstration of production-grade platform engineering applied to an agentic AI workload.
+The RAG service is exposed alongside the agent on the same API: `POST /api/v1/rag/query` (single retriever) and `POST /api/v1/rag/agent_query` (routing agent).
+
+## Measured Agentic RAG
+
+### Headline result
+
+RAGAS scores over 7 in-corpus probes, k=4, judge = Claude `claude-sonnet-4-5`, single-run (judge noise on faithfulness/relevancy is ~0.04 run-to-run; context metrics are deterministic given fixed retrieval).
+
+| retriever | faithfulness | answer_relevancy | ctx_precision | ctx_recall |
+|---|---:|---:|---:|---:|
+| dense (baseline) | 0.949 | 0.801 | **0.881** | 0.821 |
+| sparse (BM25)    | 0.832 | 0.691 |   0.440   | 0.179 |
+| hyde             | 0.928 | 0.812 | **0.937** | 0.821 |
+| multi_query      | 0.900 | 0.809 |   0.881   | 0.821 |
+| pdr              | 0.958 | 0.840 |   0.873   | 0.595 |
+| semantic         | **0.988** | 0.842 | 0.758 | **0.833** |
+| agent (routing)  | (RAGAS deferred, see below) ||||
+
+Per-route observations from the eight measured interventions:
+
+- HyDE is the one query transform that beats dense on a deterministic metric: +0.056 on context_precision. It cleanly recovers the Smaug/Lake-town chunk dense never reached, at the cost of a +1 LLM call per query (~6s).
+- Semantic chunking is the one chunk-granularity intervention that lifts recall (0.821 to 0.833), specifically fixing the two worst dense probes (Mithril 0.33 to 1.0, Bombadil 0.67 to 1.0). It pays for that with precision (0.881 to 0.758).
+- Multi-query is indistinguishable from dense once the variant union is re-ranked by similarity to the original query. Pays an LLM cost for no measurable gain on this corpus.
+- Parent-document retrieval regressed recall (0.595): dedup-by-parent diversifies away from articles where ground-truth facts are concentrated.
+- Sparse (BM25 with custom preprocessor) loses every metric. Brittle on this corpus.
+
+### What the agent does
+
+The routing agent (`app/rag/agent/graph.py`) is a LangGraph state machine. Each query is classified into one of three routes, retrieved via the route-specific retriever, graded for relevance, optionally rewritten and retried (budget: 1), then synthesized into a cited answer.
+
+```mermaid
+flowchart TD
+    Q([User question])
+    C[classify_query<br/>Claude]
+    Sem[semantic retriever<br/>Chroma: middle_earth_semantic]
+    Hy[HyDE retriever<br/>Claude + Chroma: middle_earth]
+    De[dense retriever<br/>Chroma: middle_earth]
+    G[grade_documents<br/>Claude]
+    RW[rewrite_query<br/>Claude]
+    Syn[synthesize<br/>Claude + strict_hedge prompt]
+    A([Answer with citations])
+
+    Q --> C
+    C -->|definitional| Sem
+    C -->|multi_hop| Hy
+    C -->|general| De
+    Sem --> G
+    Hy --> G
+    De --> G
+    G -->|relevant or partial| Syn
+    G -->|poor, attempt &lt; 1| RW
+    RW --> De
+    Syn --> A
+```
+
+Indices (all gitignored, rebuilt from `data/raw/` via `app/rag/ingestion/`):
+
+- `data/chroma_middle_earth/`: 681 articles, 5793 recursive chunks (800/120), `text-embedding-3-small`. Used by dense and HyDE.
+- `data/chroma_semantic/`: same corpus, 2268 chunks split at embedding-distance topic boundaries via `SemanticChunker`. Used by the semantic route.
+- `data/chroma_pdr/` + `data/pdr_parents.pkl`: 2340 parents (2000-char recursive) and 12378 children (400-char) for parent-document retrieval. Not on the routing path; available as `kind=pdr` for A/B.
+
+Classifier accuracy was measured separately on Day 11: **6 of 7 probes routed as pre-registered**; the one apparent miss (Beren & Lúthien) is the pre-registered expectation being wrong, not the classifier (the classifier's reasoning matched the alternative hypothesis written in the same session).
+
+### Methodology and judgment
+
+The repo's substance lives in [`app/rag/eval/findings.md`](app/rag/eval/findings.md), which carries day-by-day notes for every intervention with deltas, regressions, falsified hypotheses, and the failure-mode taxonomy that drove the routing design:
+
+- `synthesis-recovered`: retrieval looked imperfect but the LLM bridged the gap (Smaug, Beren).
+- `candidate-set-miss-fixable`: dense missed the right document, hybrid or HyDE found it (Smaug, Mithril at the retrieval layer).
+- `candidate-set-miss-corpus-gap`: no retriever could find it because the document was absent (Bombadil on Day 6, closed by Day 6.5 corpus add).
+- `hybrid-regressed`: hybrid hurt a query dense already solved (Gandalf, Battle).
+- `dense-already-optimal`: nothing measurably helped (Mithril at the answer layer, Gandalf).
+
+Methodology details worth flagging:
+
+- **Pre-registration.** Route categorizations and outcome predictions were written before each measurement. On Day 11 the classifier appeared to "miss" Beren & Lúthien; checking the pre-registered prediction reclassified the miss as a hit against the plan's later hypothesis.
+- **Variance bands.** RAGAS context metrics are deterministic; faithfulness and answer_relevancy carry ~0.04 judge variance per run. `app/rag/eval/compare_to_baseline.py` flags deltas only when they exceed `max(0.02, 2 * baseline_std)`.
+- **Falsified hypotheses are kept in the record.** The Day 2 "BM25 will rescue Tom Bombadil" thesis was falsified twice (first by a corpus gap, then by the measurement after the gap was closed). Both falsifications are in findings.md verbatim.
+
+### Latency budget
+
+End-to-end agent latency was measured per-node on Day 12 via a `@timed` decorator (`app/rag/eval/measure_latency.py`). One full agent invocation, cold, k=4:
+
+| node | mean ms | notes |
+|---|---:|---|
+| classify | ~2500 | Claude call, small prompt |
+| retrieve (dense) | ~260 | OpenAI embed + Chroma similarity |
+| retrieve (semantic) | ~1000 | same path, slightly larger chunks |
+| retrieve (hyde) | ~6100 | adds a hypothetical-generation Claude call |
+| grade | ~3000 | Claude call, ~2KB prompt |
+| synthesize | ~7000 | Claude call, ~1KB output |
+| **total** | **~14000** | end-to-end per query, cold |
+
+`@lru_cache(256)` on `(question, route, k)` makes warm-pass retrieval cost zero. Worth ~5-6s on HyDE-routed probes (Smaug 14.8 to 9.8 seconds); negligible on dense routes (already 260ms). Streaming via `langgraph.astream` + FastAPI `StreamingResponse` and semantic-similarity caching are both deferred (cost-aware, see below).
+
+### Eval harness
+
+Repeatable measurement across all retrievers:
+
+```bash
+make eval-one RETRIEVER=hyde N_RUNS=3        # one retriever, n-run averaged
+make eval-all                                # full retriever matrix
+make eval-compare RETRIEVER=hyde             # diff vs dense baseline
+```
+
+Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` and a rich JSON history record (per-run scores, timestamps, git_sha, per-probe std) to `app/rag/eval/ragas_history/`. `compare_to_baseline.py` reads two history JSONs and produces a delta table with significance flags. A GitHub Actions workflow (`.github/workflows/rag-eval.yml`) wires the same harness behind a `workflow_dispatch:` trigger; PR-triggered eval is intentionally disabled on cost grounds.
+
+### What's not here, and why
+
+- **RAGAS over the routing agent endpoint.** Each agent invocation is 3 to 4 Claude calls before RAGAS adds its own judge calls; a full `--n-runs=3` over 7 probes against the agent costs several dollars. Deferred to end-of-project; the routing decision quality is measured separately via classifier accuracy in `app/rag/eval/run_agent_v2_probes.py`.
+- **Streaming the agent response.** A 1 to 2 hour refactor (async-all-the-way-down, `StreamingResponse`, `langgraph.astream`) that buys time-to-first-byte UX without changing measured quality. Skipped for the portfolio cut.
+- **Conversation memory.** Each query is stateless. Adding multi-turn memory would expand state shape and require eviction policy; out of scope.
+- **Semantic caching.** Considered for the retrieval cache and rejected: exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches. Worth revisiting under production traffic.
+- **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
+- **Tolkien Gateway corpus.** The original plan called for Tolkien Gateway (the canonical fan wiki) as the primary source. It blocks this network with HTTP 403 on every request. Fell back to Fandom LotR wiki + Wikipedia, per source tag in chunk metadata.
+
+### Quickstart
+
+```bash
+# install
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# build the indices (one-time, ~5 min total: scrape, embed)
+python -m app.rag.ingestion.fetch                # scrape Fandom + Wikipedia
+python -m app.rag.ingestion.build_index          # dense + chunks pickle
+python -m app.rag.ingestion.build_semantic_index # semantic chunks (optional)
+python -m app.rag.ingestion.build_pdr_index      # PDR index (optional)
+
+# run the service
+uvicorn app.main:app --port 8000
+
+# hit the single-retriever endpoint
+curl -X POST localhost:8000/api/v1/rag/query \
+  -H 'content-type: application/json' \
+  -d '{"question": "Who killed Smaug?", "k": 4}'
+
+# hit the routing agent + inspect its decision
+curl -X POST localhost:8000/api/v1/rag/agent_query_debug \
+  -H 'content-type: application/json' \
+  -d '{"question": "What is mithril?"}'
+```
+
+### Project structure (RAG)
+
+```
+app/rag/
+├── chain/           # rag_chain.py + prompts.py (Day 5 strict_hedge system prompt)
+├── retrieval/       # vectorstore.py (dense/sparse/hybrid), hyde.py, multi_query.py,
+│                    # pdr.py, semantic.py: all behind get_retriever(kind=...)
+├── agent/           # graph.py: LangGraph routing state machine
+├── ingestion/       # fetch.py, build_index.py, build_semantic_index.py,
+│                    # build_pdr_index.py, export_chunks.py, add_bombadil.py
+├── eval/            # ragas_eval.py + compare_to_baseline.py + measure_latency.py
+│                    # findings.md (the substance) + scorecard.md (template)
+│                    # ragas_results/*.csv + ragas_history/*.json
+├── routes.py        # /api/v1/rag/query + /agent_query + /agent_query_debug
+└── schemas.py
+```
+
+---
+
+## Platform infrastructure
+
+The infrastructure half is unchanged from the pre-RAG state of the repo and is documented below.
+
+### What's in the platform half
+
+The infrastructure side of the repo: a production-grade Kubernetes/Helm deployment of the Claude agent loop with full observability and CI/CD.
 
 **Infrastructure ownership**
 - Kubernetes deployment via Helm with HPA (2→5 replicas), NetworkPolicy (default-deny), resource limits, and liveness/readiness probes
 - Multi-environment config: `values-staging.yaml` / `values-prod.yaml` with env-appropriate replicas, resource limits, and persistence sizes
 - One-command cluster provisioning and deployment via `deploy.sh` using kind
-- IaC-first approach — all config in code, nothing applied manually
+- IaC-first approach: all config in code, nothing applied manually
 
 **Agentic AI platform design**
 - Multi-turn Claude agent loop with native tool use: real web search (Tavily), code execution, file I/O
-- Every agent step — LLM calls, tool invocations, token usage — captured as OpenTelemetry spans
+- Every agent step (LLM calls, tool invocations, token usage) captured as OpenTelemetry spans
 - Async session execution with background task queue; API returns immediately with session ID
-- SQLite-backed session persistence — sessions survive pod restarts, mounted via PVC in Kubernetes
+- SQLite-backed session persistence: sessions survive pod restarts, mounted via PVC in Kubernetes
 
 **Security**
 - API key middleware (`X-API-Key` header) guards all `/api/*` routes; health and metrics endpoints exempt
@@ -32,16 +201,16 @@ This project is a portfolio demonstration of production-grade platform engineeri
 
 ## Screenshots
 
-**Agent running — live tool call inspector**
+**Agent running: live tool call inspector**
 ![Agent running](docs/screenshot-prompt.png)
 
-**Agent completed — tool call input/output + result**
+**Agent completed: tool call input/output + result**
 ![Agent result](docs/screenshot-prompt-result.png)
 
-**Jaeger — distributed trace waterfall (session → llm_call → tool_call spans)**
+**Jaeger: distributed trace waterfall (session → llm_call → tool_call spans)**
 ![Jaeger traces](docs/screenshot-jaeger.png)
 
-**Grafana — sessions, tool call rates, p95 duration, completion rate**
+**Grafana: sessions, tool call rates, p95 duration, completion rate**
 ![Grafana dashboard](docs/screenshot-grafana.png)
 
 ## Architecture
@@ -71,15 +240,15 @@ flowchart LR
 
 ## Features
 
-- **React UI** — session list with status indicators, task input, tool call inspector, live polling while agent runs
-- **Real web search** — Tavily API integration; set `TAVILY_API_KEY` to activate
-- **SQLite persistence** — sessions survive restarts; data volume mounted via Docker/Kubernetes
-- **API key auth** — `X-API-Key` middleware; disabled when `PLATFORM_API_KEY` is unset (local dev friendly)
-- **Distributed tracing** — every request and agent turn traced via OTLP → Jaeger
-- **Prometheus metrics** — sessions created, tool call rates, p95 duration, active session gauge
-- **Kubernetes-native** — Helm chart with HPA, NetworkPolicy, PVC, resource limits, health probes
-- **Multi-environment** — `values-staging.yaml` / `values-prod.yaml` with per-env resource and scaling config
-- **CI/CD** — GitHub Actions for lint/test, Docker build + Trivy security scan, Helm dry-run validation
+- **React UI**: session list with status indicators, task input, tool call inspector, live polling while agent runs
+- **Real web search**: Tavily API integration; set `TAVILY_API_KEY` to activate
+- **SQLite persistence**: sessions survive restarts; data volume mounted via Docker/Kubernetes
+- **API key auth**: `X-API-Key` middleware; disabled when `PLATFORM_API_KEY` is unset (local dev friendly)
+- **Distributed tracing**: every request and agent turn traced via OTLP → Jaeger
+- **Prometheus metrics**: sessions created, tool call rates, p95 duration, active session gauge
+- **Kubernetes-native**: Helm chart with HPA, NetworkPolicy, PVC, resource limits, health probes
+- **Multi-environment**: `values-staging.yaml` / `values-prod.yaml` with per-env resource and scaling config
+- **CI/CD**: GitHub Actions for lint/test, Docker build + Trivy security scan, Helm dry-run validation
 
 ## API
 
@@ -130,7 +299,7 @@ uvicorn app.main:app --reload
 ```bash
 cd frontend
 npm install
-npm run dev   # http://localhost:5173 — proxies /api to port 8000
+npm run dev   # http://localhost:5173, proxies /api to port 8000
 ```
 
 ### Docker Compose (full stack)
@@ -150,7 +319,7 @@ Sessions are persisted to a named Docker volume (`agent-data`). All four service
 
 ## Kubernetes Deployment
 
-> For a production AWS/EKS target cluster to deploy this into, see [dev-platform](https://github.com/nvojvodic-white/dev-platform) — a companion repo that provisions the full AWS infrastructure (VPC, EKS, RDS, GitOps with Argo CD) this workload is designed to run on.
+> For a production AWS/EKS target cluster to deploy this into, see [dev-platform](https://github.com/nvojvodic-white/dev-platform): a companion repo that provisions the full AWS infrastructure (VPC, EKS, RDS, GitOps with Argo CD) this workload is designed to run on.
 
 ### Prerequisites
 
@@ -167,12 +336,12 @@ chmod +x deploy.sh
 ### Multi-environment
 
 ```bash
-# Staging — 2 replicas, 512Mi memory, 1Gi persistence
+# Staging: 2 replicas, 512Mi memory, 1Gi persistence
 helm upgrade --install agent-platform charts/agent-platform \
   -f charts/agent-platform/values-staging.yaml \
   --set anthropicApiKey=$ANTHROPIC_API_KEY
 
-# Production — 3 replicas, 1Gi memory, 10Gi persistence, auth enabled
+# Production: 3 replicas, 1Gi memory, 10Gi persistence, auth enabled
 helm upgrade --install agent-platform charts/agent-platform \
   -f charts/agent-platform/values-prod.yaml \
   --set anthropicApiKey=$ANTHROPIC_API_KEY \
@@ -236,9 +405,9 @@ agent-platform/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | **Required.** Anthropic API key |
-| `TAVILY_API_KEY` | — | Optional. Enables real web search via Tavily |
-| `PLATFORM_API_KEY` | — | Optional. Enables `X-API-Key` auth on all `/api/*` routes |
+| `ANTHROPIC_API_KEY` | (none) | **Required.** Anthropic API key |
+| `TAVILY_API_KEY` | (none) | Optional. Enables real web search via Tavily |
+| `PLATFORM_API_KEY` | (none) | Optional. Enables `X-API-Key` auth on all `/api/*` routes |
 | `DB_PATH` | `/data/sessions.db` | SQLite database path |
 | `ENVIRONMENT` | `development` | Deployment environment tag |
 | `OTLP_ENDPOINT` | `http://jaeger:4317` | OpenTelemetry collector endpoint |
