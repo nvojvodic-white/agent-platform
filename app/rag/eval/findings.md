@@ -1,5 +1,55 @@
 # RAG findings
 
+## Day 12 (Hour 1) — Latency stack + targeted retrieval cache
+
+Added `@timed` decorators to every LangGraph node and an `lru_cache(maxsize=256)`
+on retrieval, keyed by `(question, route, k)`. Ran the 7-probe sweep twice via
+`/agent_query_debug` — cold and warm — and parsed the `[timing] node: ms` lines
+the decorator now appends to the trace.
+
+**Cold-pass per-node latency (ms, n=7):**
+
+| node | mean cold ms | per-route detail |
+|---|---|---|
+| classify | ~2500 | LLM call, small prompt |
+| retrieve (dense) | ~260 | OpenAI embed + Chroma |
+| retrieve (semantic) | ~1000 (213-3080) | same path, larger semantic chunks |
+| retrieve (hyde) | ~6100 | **adds a hypothetical-generation LLM call** |
+| grade | ~3000 | LLM call, larger prompt |
+| synthesize | ~7000 | LLM call, ~1KB output |
+| **total per query** | **~14000** | end-to-end, cold |
+
+**Where the time goes:** synthesize is the single biggest line (~50% on
+general/dense probes, less on hyde probes where retrieve is also large). The
+three LLM calls (classify, grade, synthesize) together dominate every route at
+roughly 12-13s combined. The hyde retrieve cost (+6s LLM call) is the only
+non-LLM-dominant route-specific term — and it's where the routing-vs-best-fixed
+tradeoff has a real latency dimension, not just a quality one.
+
+**Cache impact (warm pass):** retrieve drops to 0 ms on every probe (confirmed
+via the `cache hit` flag in the trace). End-to-end totals fall ~10-30% on
+hyde-routed probes (Smaug 14.8s → 9.8s, Dwarves 17.5s → 11.0s — saving ~5-6s
+each on the +1-LLM-call retrieve) and ~0-5% on dense-routed probes (retrieve
+was already 260ms; the gain is lost in LLM noise). Tom Bombadil's warm pass
+was actually slower than cold (14.5s → 15.8s) because the grade LLM call
+varied by ~4s on that probe — judge latency carries ~2-3s of run-to-run noise
+that swamps small wins.
+
+**Production-engineering reading:**
+- The cache is genuinely useful where it matters most (hyde routes). On
+  dense, it's free correctness insurance against repeated queries but doesn't
+  move the latency meaningfully.
+- Synthesize is the next-largest fixed cost. Streaming via FastAPI
+  `StreamingResponse` + `langgraph.astream` would not reduce total tokens but
+  would give perceived ~2-3s time-to-first-byte. Deferred (1-2h refactor to
+  async-all-the-way-down for a UX-only win — matches the README's "manual-only
+  CI" cost-aware framing).
+- Considered semantic caching (similar-question lookup via embedding distance)
+  and rejected for portfolio scope. Worth adding when there's production
+  traffic with paraphrased repeats; for the 7-probe demo loop, exact-string
+  LRU catches every meaningful hit and avoids the silent-wrong-answer failure
+  mode of fuzzy-match caches.
+
 ## Day 11 — LangGraph routing agent
 
 Built a LangGraph state machine in `app/rag/agent/graph.py` that classifies each

@@ -16,6 +16,8 @@ Graph:
                                                                v
                                                           synthesize -> END
 """
+import time
+from functools import lru_cache, wraps
 from operator import add
 from typing import Annotated, Literal, TypedDict
 
@@ -28,6 +30,29 @@ from pydantic import BaseModel, Field
 
 from app.rag.chain.prompts import rag_prompt
 from app.rag.retrieval.vectorstore import get_retriever
+
+
+def timed(name: str):
+    """Wrap a node so its returned trace delta gets a [timing] line appended.
+
+    Important: the AgentState.trace field uses the `add` reducer, so each node
+    returns ONLY its delta (the lines it appends), never the whole running
+    trace. We extend the node's own trace delta with one timing line.
+    """
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(state):
+            t0 = time.perf_counter()
+            result = fn(state)
+            dt_ms = (time.perf_counter() - t0) * 1000
+            node_trace = list(result.get("trace", []))
+            node_trace.append(f"[timing] {name}: {dt_ms:.0f}ms")
+            return {**result, "trace": node_trace}
+
+        return wrapper
+
+    return decorator
 
 Route = Literal["definitional", "multi_hop", "general"]
 Grade = Literal["relevant", "partial", "poor"]
@@ -85,6 +110,7 @@ classify_prompt = ChatPromptTemplate.from_messages(
 )
 
 
+@timed("classify")
 def classify_query(state: AgentState) -> dict:
     parser = PydanticOutputParser(pydantic_object=Classification)
     chain = classify_prompt | classifier_llm | parser
@@ -105,17 +131,28 @@ def classify_query(state: AgentState) -> dict:
 
 # --- retrieve ---------------------------------------------------------------
 
+@lru_cache(maxsize=256)
+def _cached_retrieve(question: str, retriever_kind: str, k: int) -> tuple:
+    """Per-(question, route, k) retrieval cache. Tuple return so it's hashable,
+    though we only need the tuple-ness for the LRU value; the key is the args.
+    Reruns and demos hit the same probes; this drops repeat latency to ~0ms."""
+    return tuple(get_retriever(k=k, kind=retriever_kind).invoke(question))
+
+
+@timed("retrieve")
 def retrieve(state: AgentState) -> dict:
     route = state["route"]
     question = state.get("rewritten_question") or state["question"]
     retriever_kind = ROUTE_TO_RETRIEVER[route]
-    retriever = get_retriever(k=4, kind=retriever_kind)
-    docs = retriever.invoke(question)
+    before = _cached_retrieve.cache_info().hits
+    docs = list(_cached_retrieve(question, retriever_kind, 4))
+    cache_hit = _cached_retrieve.cache_info().hits > before
     return {
         "documents": docs,
         "trace": [
             f"retrieved {len(docs)} docs via {retriever_kind} "
-            f"(attempt {state.get('attempt', 0) + 1})"
+            f"(attempt {state.get('attempt', 0) + 1}"
+            f"{', cache hit' if cache_hit else ''})"
         ],
     }
 
@@ -155,6 +192,7 @@ grade_prompt = ChatPromptTemplate.from_messages(
 )
 
 
+@timed("grade")
 def grade_documents(state: AgentState) -> dict:
     parser = PydanticOutputParser(pydantic_object=GradeOutput)
     chain = grade_prompt | grade_llm | parser
@@ -197,6 +235,7 @@ rewrite_prompt = ChatPromptTemplate.from_messages(
 )
 
 
+@timed("rewrite")
 def rewrite_query(state: AgentState) -> dict:
     chain = rewrite_prompt | rewrite_llm | StrOutputParser()
     rewritten = chain.invoke({"question": state["question"]}).strip()
@@ -214,6 +253,7 @@ synth_llm = ChatAnthropic(
 )
 
 
+@timed("synthesize")
 def synthesize(state: AgentState) -> dict:
     context = "\n\n---\n\n".join(
         f"[{i}] {d.metadata.get('title', '?')}\n{d.page_content}"
