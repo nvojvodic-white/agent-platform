@@ -9,6 +9,7 @@ from app.rag.agent.graph_streaming import (
     get_streaming_agent_with_memory,
     synthesize_streaming,
 )
+from app.rag.agent.router_classifier import MetaClassification, aclassify_route
 from app.rag.chain.rag_chain import build_chain
 from app.rag.memory.store import append_turn, clear_session, get_recent_turns
 from app.rag.schemas import (
@@ -226,6 +227,17 @@ def clear_session_endpoint(session_id: str) -> dict:
     """Clear all conversation turns for a session. Returns rows removed."""
     removed = clear_session(session_id)
     return {"session_id": session_id, "turns_removed": removed}
+
+
+@router.post("/route_question", response_model=MetaClassification)
+async def route_question(req: QueryRequest) -> MetaClassification:
+    """Meta-classifier: route a question to the RAG service or the general agent.
+
+    Single LLM call. Returns {route, reasoning}. The frontend uses this to
+    pick a backend per question; the reasoning is shown to the user so
+    silent mis-routes are visible and overridable.
+    """
+    return await aclassify_route(req.question)
 
 
 @router.post("/agent_query_debug")
