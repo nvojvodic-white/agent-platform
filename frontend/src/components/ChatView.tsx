@@ -1,7 +1,8 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createSession,
   deleteRagSession,
+  getRagSessionTurns,
   getSession,
   routeQuestion,
   streamRagQuery,
@@ -28,6 +29,41 @@ export function ChatView() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+
+  // Hydrate visible chat from the backend conversation store when sessionId
+  // changes (mount or post-reset). Only RAG turns are stored; agent turns
+  // won't reappear (they live in app/agent/store.py). Per-turn metadata
+  // (route, grade, sources, reasoning) was not persisted, so hydrated
+  // assistant messages render without those badges and the source panel.
+  // The `hydrated` flag lets MessageBubble suppress the override button on
+  // restored turns (no original-question context to re-run from).
+  useEffect(() => {
+    let cancelled = false
+    getRagSessionTurns(sessionId)
+      .then((turns) => {
+        if (cancelled || turns.length === 0) return
+        setMessages((prev) => {
+          // Only hydrate into an EMPTY chat. If the user has already started
+          // sending messages in this mount, don't overwrite them.
+          if (prev.length > 0) return prev
+          return turns.map((t) => ({
+            id: `hydrated-${sessionId}-${t.turn_index}`,
+            role: t.role,
+            content: t.content,
+            mode: t.role === 'assistant' ? 'rag' : undefined,
+            hydrated: true,
+            streaming: false,
+          }))
+        })
+      })
+      .catch((e) => {
+        // Non-fatal: a fresh session has no turns and may 404 or return [].
+        console.warn('hydrate failed', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
 
   const appendUser = (content: string): string => {
     const id = mkId()
@@ -140,6 +176,14 @@ export function ChatView() {
     async (question: string, forceMode?: ChatMode) => {
       if (!question.trim() || busy) return
       setBusy(true)
+      // Snapshot the history BEFORE appending the user turn, so the slice
+      // we send to the meta-classifier is the prior conversation, not the
+      // question itself. Limit to last 4 turns (2 user/assistant pairs): the
+      // classifier only needs enough context to spot a follow-up topic.
+      const historyForRouting = messages
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .slice(-4)
+        .map((m) => ({ role: m.role, content: m.content }))
       appendUser(question)
       let mode: ChatMode
       let reasoning: string
@@ -148,7 +192,7 @@ export function ChatView() {
         reasoning = `manual override: ${forceMode}`
       } else {
         try {
-          const meta = await routeQuestion(question)
+          const meta = await routeQuestion(question, historyForRouting)
           mode = meta.route
           reasoning = meta.reasoning
         } catch (e) {
@@ -164,7 +208,7 @@ export function ChatView() {
       }
       setBusy(false)
     },
-    [busy, runAgent, runRag],
+    [busy, messages, runAgent, runRag],
   )
 
   const retryWithMode = useCallback(
@@ -285,6 +329,11 @@ function MessageBubble({
             grade: {message.ragGrade}
           </span>
         )}
+        {message.hydrated && (
+          <span className="hydrated-tag" title="Restored from previous session">
+            restored
+          </span>
+        )}
         {message.streaming && <span className="streaming-dot" />}
       </div>
       {message.reasoning && (
@@ -331,7 +380,7 @@ function MessageBubble({
           </ul>
         </details>
       )}
-      {!message.streaming && message.mode && (
+      {!message.streaming && message.mode && !message.hydrated && (
         <button
           type="button"
           className="msg-retry"

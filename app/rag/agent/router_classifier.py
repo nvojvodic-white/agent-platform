@@ -55,21 +55,49 @@ _META_PROMPT = ChatPromptTemplate.from_messages(
             "played Gandalf, real-world Tolkien biography post-1973, comparisons "
             "to Game of Thrones), route to `agent`. The RAG corpus is curated "
             "lore, not general Tolkien meta-knowledge.\n\n"
+            "IMPORTANT - follow-up questions: if conversation history is "
+            "provided, use it to disambiguate short / pronoun-y questions "
+            "before routing. 'With what weapon?' after a Smaug exchange is a "
+            "lore follow-up (route `rag`), not a generic ambiguous question. "
+            "Route based on what the question is ACTUALLY about given context, "
+            "not its surface form.\n\n"
             "Reply with JSON: {{\"route\": \"rag\"|\"agent\", \"reasoning\": "
             "\"<one sentence>\"}}",
         ),
-        ("human", "{question}"),
+        (
+            "human",
+            "Conversation history (if any):\n{history}\n\nQuestion: {question}",
+        ),
     ]
 )
 
 
-async def aclassify_route(question: str) -> MetaClassification:
-    """Async classify. Falls back to 'agent' on parse failure (the agent path
-    can always handle anything, so defaulting there is the safer side)."""
+def _format_history(history: list[dict] | None) -> str:
+    if not history:
+        return "(none - this is the first turn)"
+    return "\n".join(
+        f"{t.get('role', '?').title()}: {t.get('content', '')}"
+        for t in history
+    )
+
+
+async def aclassify_route(
+    question: str, history: list[dict] | None = None
+) -> MetaClassification:
+    """Async classify with optional conversation history (last few turns of
+    {role, content}). Without history the prompt sees only the question, which
+    silently mis-routes pronoun-y follow-ups (e.g. 'with what weapon?' after a
+    Smaug exchange goes to agent). With history the classifier disambiguates
+    against the prior topic.
+
+    Falls back to 'agent' on parse failure (the agent path can always handle
+    arbitrary inputs, so defaulting there is the safer side)."""
     parser = PydanticOutputParser(pydantic_object=MetaClassification)
     chain = _META_PROMPT | _meta_llm | parser
     try:
-        return await chain.ainvoke({"question": question})
+        return await chain.ainvoke(
+            {"question": question, "history": _format_history(history)}
+        )
     except Exception as e:
         return MetaClassification(
             route="agent",

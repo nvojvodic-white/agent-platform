@@ -15,6 +15,7 @@ from app.rag.memory.store import append_turn, clear_session, get_recent_turns
 from app.rag.schemas import (
     QueryRequest,
     QueryResponse,
+    RouteRequest,
     Source,
     StreamQueryRequest,
 )
@@ -229,15 +230,42 @@ def clear_session_endpoint(session_id: str) -> dict:
     return {"session_id": session_id, "turns_removed": removed}
 
 
+@router.get("/sessions/{session_id}/turns")
+def get_session_turns_endpoint(session_id: str, limit: int = 50) -> dict:
+    """Return stored turns for a session, oldest-first. Used by the frontend
+    to hydrate the chat on page reload. Returns only what was persisted:
+    role + content + index + timestamp. Route/grade/sources are NOT stored
+    per turn, so hydrated messages render without those badges (correct: we
+    don't know after-the-fact)."""
+    turns = get_recent_turns(session_id, n=limit)
+    return {
+        "session_id": session_id,
+        "turns": [
+            {
+                "role": t.role,
+                "content": t.content,
+                "turn_index": t.turn_index,
+                "timestamp": t.timestamp,
+            }
+            for t in turns
+        ],
+    }
+
+
 @router.post("/route_question", response_model=MetaClassification)
-async def route_question(req: QueryRequest) -> MetaClassification:
+async def route_question(req: RouteRequest) -> MetaClassification:
     """Meta-classifier: route a question to the RAG service or the general agent.
 
-    Single LLM call. Returns {route, reasoning}. The frontend uses this to
-    pick a backend per question; the reasoning is shown to the user so
-    silent mis-routes are visible and overridable.
+    Single LLM call. Returns {route, reasoning}. Optional `history` (last few
+    turns) lets the classifier disambiguate pronoun-y follow-ups (e.g. 'with
+    what weapon?' after a Smaug exchange routes to RAG, not agent). The
+    frontend uses this to pick a backend per question; the reasoning is shown
+    to the user so silent mis-routes stay visible and overridable.
     """
-    return await aclassify_route(req.question)
+    history_dicts = (
+        [h.model_dump() for h in req.history] if req.history else None
+    )
+    return await aclassify_route(req.question, history_dicts)
 
 
 @router.post("/agent_query_debug")

@@ -15,6 +15,19 @@ class StreamQueryRequest(BaseModel):
     k: int = Field(default=4, ge=1, le=20)
 
 
+class HistoryTurn(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., max_length=10000)
+
+
+class RouteRequest(BaseModel):
+    """Request shape for /route_question. Optional `history` carries the last
+    few turns so the meta-classifier can disambiguate pronoun-y follow-ups."""
+
+    question: str = Field(..., min_length=1, max_length=500)
+    history: list[HistoryTurn] | None = Field(default=None, max_length=20)
+
+
 class Source(BaseModel):
     title: str
     url: str

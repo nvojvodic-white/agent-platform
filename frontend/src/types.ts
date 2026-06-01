@@ -50,6 +50,17 @@ export type StreamFrame =
   | { type: 'error'; message: string }
   | { type: 'done' }
 
+// Shape returned by GET /api/v1/rag/sessions/{id}/turns. Only role + content
+// were persisted; the route/grade/sources from the original message are lost
+// (deliberate: the conversation store is the source of truth for memory,
+// not for UI replay).
+export interface StoredTurn {
+  role: 'user' | 'assistant'
+  content: string
+  turn_index: number
+  timestamp: number
+}
+
 // One displayed chat message; the UI accumulates these in order.
 export interface ChatMessage {
   id: string
@@ -64,4 +75,5 @@ export interface ChatMessage {
   toolCalls?: ToolCall[]                                // for agent-mode messages
   streaming?: boolean                                   // true while tokens still arriving
   error?: string
+  hydrated?: boolean                                    // true if loaded from /sessions/{id}/turns
 }

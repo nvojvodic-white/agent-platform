@@ -1,6 +1,7 @@
 import type {
   AgentSession,
   MetaClassification,
+  StoredTurn,
   StreamFrame,
 } from './types'
 
@@ -43,11 +44,16 @@ export async function deleteSession(id: string): Promise<void> {
 
 // ---------- RAG: meta-classifier + streaming chat -------------------------
 
-export async function routeQuestion(question: string): Promise<MetaClassification> {
+export async function routeQuestion(
+  question: string,
+  history?: { role: string; content: string }[],
+): Promise<MetaClassification> {
+  const body: Record<string, unknown> = { question }
+  if (history && history.length > 0) body.history = history
   const res = await fetch(`${BASE}/rag/route_question`, {
     method: 'POST',
     headers: headers({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ question }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`routeQuestion failed: ${res.status}`)
   return res.json()
@@ -58,6 +64,23 @@ export async function deleteRagSession(sessionId: string): Promise<void> {
     method: 'DELETE',
     headers: headers(),
   })
+}
+
+/**
+ * Fetch stored conversation turns for a RAG session. Used to hydrate the chat
+ * on page reload. Returns turns oldest-first. May be empty for a fresh session.
+ */
+export async function getRagSessionTurns(
+  sessionId: string,
+  limit = 50,
+): Promise<StoredTurn[]> {
+  const res = await fetch(
+    `${BASE}/rag/sessions/${sessionId}/turns?limit=${limit}`,
+    { headers: headers() },
+  )
+  if (!res.ok) throw new Error(`getRagSessionTurns failed: ${res.status}`)
+  const data = (await res.json()) as { session_id: string; turns: StoredTurn[] }
+  return data.turns
 }
 
 /**
