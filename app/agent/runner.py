@@ -19,6 +19,22 @@ load_dotenv()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 tracer = get_tracer()
 
+SYSTEM_PROMPT = """You are a helpful AI assistant with access to tools.
+
+You have a search_middle_earth tool that searches a curated corpus of Tolkien
+lore (Fandom LotR wiki and Wikipedia). When the user asks about anything from
+Middle-earth — characters, places, events, battles, artifacts, languages,
+history — call this tool. The tool returns a grounded answer with [n]
+citations. When you respond to the user, preserve the answer's substance and
+its [n] citations; you may lightly rephrase for conversational fit, but do not
+introduce facts that were not in the tool's response. If the tool reports the
+search is unavailable, tell the user the lore search could not be completed and
+offer to answer from general knowledge if appropriate, clearly marking it as
+such.
+
+For questions that are not about Tolkien or Middle-earth, do not call
+search_middle_earth; use the other tools or answer directly as appropriate."""
+
 
 def run_agent(session: AgentSession) -> AgentSession:
     active_sessions.inc()
@@ -36,6 +52,7 @@ def run_agent(session: AgentSession) -> AgentSession:
                     response = client.messages.create(
                         model="claude-sonnet-4-20250514",
                         max_tokens=4096,
+                        system=SYSTEM_PROMPT,
                         tools=TOOLS,
                         messages=messages
                     )

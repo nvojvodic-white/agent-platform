@@ -3,7 +3,7 @@ setuptools>=78.0.0
 wheel>=0.46.2
 annotated-doc==0.0.4
 annotated-types==0.7.0
-anthropic==0.95.0
+anthropic==0.96.0
 anyio==4.13.0
 asgiref==3.11.1
 certifi==2026.2.25
@@ -42,3 +42,25 @@ typing_extensions==4.15.0
 uvicorn==0.44.0
 wrapt==2.1.2
 zipp==3.23.1
+
+# RAG service (app/rag/)
+langchain==1.3.1
+langchain-classic==1.0.7
+langchain-community==0.4.2
+langchain-experimental==0.4.2
+langchain-anthropic==1.4.3
+langchain-chroma==1.1.0
+langchain-openai==1.2.2
+langchain-text-splitters==1.1.2
+chromadb==1.5.9
+tiktoken==0.8.0
+rank_bm25==0.2.2
+
+# RAG evaluation (app/rag/eval/)
+ragas==0.4.0
+datasets==4.8.5
+
+# RAG ingestion (app/rag/ingestion/)
+requests==2.34.2
+beautifulsoup4==4.12.3
+tqdm==4.67.3

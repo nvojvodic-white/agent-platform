@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Response
 from app.api.routes import router
+from app.rag.routes import router as rag_router
 from app.observability.tracing import setup_tracing
 from app.observability.metrics import get_metrics
 from app.middleware.auth import APIKeyMiddleware
@@ -16,6 +17,7 @@ app = FastAPI(
 app.add_middleware(APIKeyMiddleware)
 FastAPIInstrumentor.instrument_app(app)
 app.include_router(router, prefix="/api/v1")
+app.include_router(rag_router, prefix="/api/v1/rag")
 
 
 @app.get("/health")

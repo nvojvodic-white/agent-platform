@@ -3,6 +3,8 @@ import sys
 import httpx
 from io import StringIO
 
+from app.tools.rag_search import search_middle_earth
+
 
 def execute_tool(tool_name: str, tool_input: dict) -> str:
     if tool_name == "web_search":
@@ -11,6 +13,8 @@ def execute_tool(tool_name: str, tool_input: dict) -> str:
         return _execute_code(tool_input["code"])
     elif tool_name == "read_file":
         return _read_file(tool_input["path"])
+    elif tool_name == "search_middle_earth":
+        return search_middle_earth(tool_input["question"], tool_input.get("k", 4))
     else:
         return f"Unknown tool: {tool_name}"
 

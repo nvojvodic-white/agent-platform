@@ -19,3 +19,6 @@ charts/agent-platform/charts/
 
 # OS
 .DS_Store
+
+# RAG ingestion artefacts (scraped corpus + Chroma DB)
+data/
