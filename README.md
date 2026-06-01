@@ -120,6 +120,7 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 - **Semantic caching.** Considered for the retrieval cache and rejected: exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches. Worth revisiting under production traffic.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
 - **Tolkien Gateway corpus.** The original plan called for Tolkien Gateway (the canonical fan wiki) as the primary source. It blocks this network with HTTP 403 on every request. Fell back to Fandom LotR wiki + Wikipedia, per source tag in chunk metadata.
+- **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.
 
 ### Quickstart
 
