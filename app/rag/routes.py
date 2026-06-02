@@ -10,6 +10,7 @@ from app.rag.agent.graph_streaming import (
     synthesize_streaming,
 )
 from app.rag.agent.router_classifier import MetaClassification, aclassify_route
+from app.rag.cache.semantic import get_cache, is_enabled as cache_enabled
 from app.rag.chain.rag_chain import build_chain
 from app.rag.memory.store import append_turn, clear_session, get_recent_turns
 from app.rag.schemas import (
@@ -67,7 +68,28 @@ def query(req: QueryRequest) -> QueryResponse:
 @router.post("/agent_query", response_model=QueryResponse)
 def agent_query(req: QueryRequest) -> QueryResponse:
     """Routing RAG agent (LangGraph): classify -> retrieve -> grade -> [rewrite]
-    -> synthesize. Same response shape as /query so callers can A/B."""
+    -> synthesize. Same response shape as /query so callers can A/B.
+
+    Optional semantic cache: if SEMANTIC_CACHE_ENABLED=1, the question is
+    embedded and matched against prior cached questions; a similarity at or
+    above the threshold (default 0.97) returns the cached response with
+    from_cache=true. Disabled by default for the reasons documented in
+    app/rag/cache/semantic.py (silent-staleness on prompt/retriever/corpus
+    changes; threshold not measured against a paraphrase probe set)."""
+    # Pre-flight: semantic cache lookup, only if enabled.
+    if cache_enabled():
+        cache = get_cache()
+        hit, sim = cache.get(req.question)
+        if hit is not None:
+            # Reconstruct QueryResponse from the cached payload; mark the hit.
+            return QueryResponse(
+                answer=hit["answer"],
+                sources=[Source(**s) for s in hit["sources"]],
+                retrieved_chunks=hit["retrieved_chunks"],
+                from_cache=True,
+                cache_similarity=sim,
+            )
+
     agent = get_agent()
     result = agent.invoke({"question": req.question})
     docs = result.get("documents", [])
@@ -80,11 +102,26 @@ def agent_query(req: QueryRequest) -> QueryResponse:
         )
         for d in docs
     ]
-    return QueryResponse(
+    response = QueryResponse(
         answer=result.get("answer", ""),
         sources=sources,
         retrieved_chunks=len(docs),
     )
+
+    # Cache the fresh response so subsequent semantically-similar questions
+    # can hit. Store sources as plain dicts (Pydantic dump) since the cache
+    # payload is just a serialisable shape, not a model.
+    if cache_enabled():
+        get_cache().put(
+            req.question,
+            {
+                "answer": response.answer,
+                "sources": [s.model_dump() for s in response.sources],
+                "retrieved_chunks": response.retrieved_chunks,
+            },
+        )
+
+    return response
 
 
 @router.post("/agent_query_stream")

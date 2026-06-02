@@ -135,6 +135,20 @@ done
 
 In the smoke run: turn 2 (`Who killed him?`) resolves to `Who killed Smaug?` and the classifier flips the route from `definitional` to `multi_hop`, which routes to HyDE (the Day-8 measured winner for this question shape). Memory + routing-by-question-type compose: the pronoun resolution is what makes the route flip even possible.
 
+### Semantic cache (opt-in)
+
+`app/rag/cache/semantic.py` ships a semantic response cache wired into `/agent_query`. Disabled by default. Enable with `SEMANTIC_CACHE_ENABLED=1`. Configurable via `SEMANTIC_CACHE_THRESHOLD` (default 0.97) and `SEMANTIC_CACHE_MAX_SIZE` (default 256). The cache embeds each question with `text-embedding-3-small`, compares to prior cached questions by cosine similarity, and serves the cached `QueryResponse` (with `from_cache=true` and the similarity score visible to the client) on hits.
+
+Smoke test (enabled, 0.97 threshold):
+
+| call | latency | from_cache | similarity |
+|---|---|---|---|
+| `Who killed Smaug?` (cold) | 17.1s | false | n/a |
+| `Who killed Smaug?` (repeat) | **0.2s** | **true** | 0.9999 |
+| `Who slayed Smaug the dragon?` | 16.5s | false | (paraphrase missed at 0.97) |
+
+Three things this lever is honest about: (a) the threshold is a guess, not tuned against a paraphrase probe set; (b) the cache has no automatic invalidation, so changing the prompt or re-ingesting the corpus while the process keeps running serves stale entries until restart; (c) it is wired into `/agent_query` only, not the streaming or multi-turn endpoints (streaming would require serving a cached response as a single fake "token frame"; multi-turn breaks because the cache key is the raw question, ignoring conversation context that changes meaning). The disabled-by-default posture is deliberate: the lever exists for portfolio visibility, but on this 7-probe corpus the exact-string LRU on retrieval already catches every repeat.
+
 ### Eval harness
 
 Repeatable measurement across all retrievers:
@@ -149,7 +163,7 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 
 ### What's not here, and why
 
-- **Semantic caching.** Considered for the retrieval cache and rejected: exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches. Worth revisiting under production traffic.
+- **Tuned semantic-cache threshold.** A semantic response cache is wired into `/agent_query` (disabled by default; see the Semantic cache section above), but the 0.97 default threshold is a guess. Tuning it properly requires a paraphrase probe set (multiple phrasings per ground-truth question) and a measured hit-rate / false-positive sweep across 0.90 - 0.99. Smoke test confirmed an exact repeat hits at sim=0.9999 (17.1s -> 0.2s, ~85x latency win) but a paraphrase ("Who slayed Smaug the dragon?" vs "Who killed Smaug?") missed at 0.97. Without the paraphrase eval the threshold is honest noise.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
 - **Tolkien Gateway corpus.** The original plan called for Tolkien Gateway (the canonical fan wiki) as the primary source. It blocks this network with HTTP 403 on every request. Fell back to Fandom LotR wiki + Wikipedia, per source tag in chunk metadata.
 - **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.

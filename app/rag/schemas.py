@@ -39,3 +39,9 @@ class QueryResponse(BaseModel):
     answer: str
     sources: list[Source]
     retrieved_chunks: int
+    # Set true if the response was served from the semantic cache rather than
+    # a fresh pipeline run. Always false unless SEMANTIC_CACHE_ENABLED=1.
+    from_cache: bool = False
+    # Similarity to the closest cached question (0.0 if cache disabled or empty).
+    # Only meaningful when from_cache=true; otherwise it is the best near-miss.
+    cache_similarity: float | None = None
