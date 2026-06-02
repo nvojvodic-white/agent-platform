@@ -1,5 +1,67 @@
 # RAG findings
 
+## Day 16: RAGAS over the routing agent (the deferred row, filled)
+
+Ran `ragas_eval.py --agent` (new flag, in-process `get_agent()` path,
+n_runs=1 to match the other rows). 7 probes, ~50 Claude calls total. This
+closes the Day-11 deferral that has been the visible gap in the README
+headline table since the routing agent shipped.
+
+| retriever | faithfulness | answer_relevancy | ctx_precision | ctx_recall |
+|---|---:|---:|---:|---:|
+| dense (baseline) | 0.949 | 0.801 | 0.881 | 0.821 |
+| sparse | 0.832 | 0.691 | 0.440 | 0.179 |
+| hyde | 0.928 | 0.812 | **0.937** | 0.821 |
+| multi_query | 0.900 | 0.809 | 0.881 | 0.821 |
+| pdr | 0.958 | 0.840 | 0.873 | 0.595 |
+| semantic | **0.988** | 0.842 | 0.758 | 0.833 |
+| **agent (routing)** | 0.918 | 0.812 | 0.889 | **0.881** |
+
+**The agent wins recall outright (0.881).** No single retriever beats 0.833.
+The agent gets there by composing per-probe routing decisions: Mithril and
+Bombadil hit 1.0 recall (semantic's strength), Smaug and Battle of Five
+Armies hit 1.0 (dense's strength), all in a single eval. This is the
+thesis-question answer from Day 11 ("can measured routing beat the best
+single retriever?") finally measured rather than asserted: yes on recall,
+which was the metric the project's whole arc was bottlenecked on.
+
+**Per-probe agent scores worth flagging:**
+
+| probe | faith | rel | prec | recall | observation |
+|---|---|---|---|---|---|
+| Gandalf | 0.875 | 0.848 | 0.806 | 0.750 | Routed semantic; semantic's recall ceiling on this probe matters here |
+| Smaug | 1.000 | 0.838 | 1.000 | 1.000 | Routed hyde; perfect across the board (the Day-8 hyde win, automated) |
+| Dwarves rings | 0.812 | 0.777 | 0.917 | 0.667 | Routed hyde; precision win held, recall same as semantic |
+| Battle of Five Armies | 0.808 | 0.802 | 1.000 | 1.000 | Routed dense; the synthesis-recovered case from Day 3 still works |
+| Beren / Luthien | 0.971 | 0.792 | 1.000 | 0.750 | Routed semantic; the corpus-coverage limit (no standalone Beren article) caps recall |
+| Mithril | 1.000 | 0.840 | 0.500 | 1.000 | Routed semantic; recall fixed (was 0.33 on dense), precision drops as expected |
+| Bombadil | 0.963 | 0.785 | 1.000 | 1.000 | Routed semantic; the Day 6.5 corpus fix + semantic routing both pay off here |
+
+**Cost of the recall win: faithfulness (0.918 vs semantic's 0.988).** The
+agent's `grade -> [rewrite -> retrieve]` loop occasionally retries; when it
+does, the rewrite-driven second retrieval injects mildly noisier context and
+the synthesiser makes more claims the judge cannot fully entail. This is
+also the per-probe-routing tax: when you compose three retrievers'
+strengths, you also compose three retrievers' weaknesses, and the synthesis
+layer absorbs that as small faithfulness slips. The Day-12 latency budget
+(~14s end-to-end cold) already flagged the agent's speed cost; today's
+measurement adds the quality side of the same tradeoff.
+
+**Decision:** the agent's recall lead is real but the faithfulness loss is
+real too. Whether to make the agent the default depends on whether the
+deployment cares more about "find the right facts" (recall, agent wins) or
+"never claim what's not in context" (faithfulness, semantic wins). For a
+Tolkien lore demo, recall matters more; for a high-stakes-grounded use case
+it would be the other way. Both rows now exist on the scorecard; the choice
+is informed rather than guessed.
+
+**Methodology note:** the `--agent` flag uses the in-process `get_agent()`
+(same LangGraph powering `/agent_query`), not an HTTP call. This matches
+how the other rows are measured (each calls `build_chain()` in-process) and
+keeps the eval surface uniform. The streaming agent (`/agent_query_stream_v2`)
+shares the same nodes minus synthesis-as-graph-node, so its RAGAS would be
+identical to this row; measuring it separately would just burn judge calls.
+
 ## Day 12 (Hour 1) — Latency stack + targeted retrieval cache
 
 Added `@timed` decorators to every LangGraph node and an `lru_cache(maxsize=256)`

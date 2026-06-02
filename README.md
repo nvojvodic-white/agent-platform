@@ -20,16 +20,17 @@ RAGAS scores over 7 in-corpus probes, k=4, judge = Claude `claude-sonnet-4-5`, s
 | hyde             | 0.928 | 0.812 | **0.937** | 0.821 |
 | multi_query      | 0.900 | 0.809 |   0.881   | 0.821 |
 | pdr              | 0.958 | 0.840 |   0.873   | 0.595 |
-| semantic         | **0.988** | 0.842 | 0.758 | **0.833** |
-| agent (routing)  | (RAGAS deferred, see below) ||||
+| semantic         | **0.988** | 0.842 | 0.758 | 0.833 |
+| agent (routing)  | 0.918 | 0.812 | 0.889 | **0.881** |
 
-Per-route observations from the eight measured interventions:
+Per-route observations:
 
 - HyDE is the one query transform that beats dense on a deterministic metric: +0.056 on context_precision. It cleanly recovers the Smaug/Lake-town chunk dense never reached, at the cost of a +1 LLM call per query (~6s).
 - Semantic chunking is the one chunk-granularity intervention that lifts recall (0.821 to 0.833), specifically fixing the two worst dense probes (Mithril 0.33 to 1.0, Bombadil 0.67 to 1.0). It pays for that with precision (0.881 to 0.758).
 - Multi-query is indistinguishable from dense once the variant union is re-ranked by similarity to the original query. Pays an LLM cost for no measurable gain on this corpus.
 - Parent-document retrieval regressed recall (0.595): dedup-by-parent diversifies away from articles where ground-truth facts are concentrated.
 - Sparse (BM25 with custom preprocessor) loses every metric. Brittle on this corpus.
+- **Agent (routing) wins recall outright (0.881)** by composing the recall wins of multiple retrievers per probe: Mithril and Bombadil go to 1.0 (semantic's territory), Smaug and Battle of Five Armies go to 1.0 (dense's territory). No single retriever beats 0.833; routing breaks the ceiling. The cost is faithfulness (0.918 vs semantic's 0.988): when the agent retries on a poor grade, the rewrite + second retrieval injects mildly noisier context and the synthesizer makes more claims the judge cannot fully entail. The Day-12 latency budget already flagged the routing agent at ~14s end-to-end (cold), so this is a quality-vs-speed-vs-cost three-way tradeoff, not a free win.
 
 ### What the agent does
 
@@ -148,7 +149,6 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 
 ### What's not here, and why
 
-- **RAGAS over the routing agent endpoint.** Each agent invocation is 3 to 4 Claude calls before RAGAS adds its own judge calls; a full `--n-runs=3` over 7 probes against the agent costs several dollars. Deferred to end-of-project; the routing decision quality is measured separately via classifier accuracy in `app/rag/eval/run_agent_v2_probes.py`.
 - **Semantic caching.** Considered for the retrieval cache and rejected: exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches. Worth revisiting under production traffic.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
 - **Tolkien Gateway corpus.** The original plan called for Tolkien Gateway (the canonical fan wiki) as the primary source. It blocks this network with HTTP 403 on every request. Fell back to Fandom LotR wiki + Wikipedia, per source tag in chunk metadata.

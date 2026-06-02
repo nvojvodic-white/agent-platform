@@ -66,22 +66,46 @@ METRIC_COLS = (
 )
 
 
-def build_eval_dataset(retriever_kind: str, k: int) -> EvaluationDataset:
+def build_eval_dataset(
+    retriever_kind: str, k: int, agent: bool = False
+) -> EvaluationDataset:
+    """Build a RAGAS dataset by running each probe through either a single
+    retriever's chain (default) or the full routing agent (--agent).
+
+    Agent mode uses the in-process get_agent() (the non-streaming LangGraph
+    powering /agent_query): classify_query -> retrieve via the chosen route ->
+    grade -> [rewrite -> retrieve] -> synthesize. Same code path as the
+    production endpoint; just invoked directly to skip the HTTP layer for the
+    eval (cleaner, same as how the other rows are measured)."""
     probes = json.loads(PROBES_PATH.read_text())["in_corpus"]
-    chain = build_chain(k=k, retriever_kind=retriever_kind)
-    retriever = get_retriever(k=k, kind=retriever_kind)
+
+    if agent:
+        from app.rag.agent.graph import get_agent
+
+        _agent = get_agent()
+
+        def run_one(q: str) -> tuple[str, list]:
+            state = _agent.invoke({"question": q})
+            return state.get("answer", ""), state.get("documents", [])
+
+    else:
+        chain = build_chain(k=k, retriever_kind=retriever_kind)
+
+        def run_one(q: str) -> tuple[str, list]:
+            result = chain.invoke(q)
+            return result["answer"], result["docs"]
 
     samples = []
     for p in probes:
         if not p.get("ground_truth"):
             continue
         q = p["query"]
-        result = chain.invoke(q)  # {docs, question, context, answer}
+        answer, docs = run_one(q)
         samples.append(
             SingleTurnSample(
                 user_input=q,
-                response=result["answer"],
-                retrieved_contexts=[d.page_content for d in result["docs"]],
+                response=answer,
+                retrieved_contexts=[d.page_content for d in docs],
                 reference=p["ground_truth"],
             )
         )
@@ -114,11 +138,19 @@ def run_once(ds, judge, embed) -> pd.DataFrame:
     return result.to_pandas()
 
 
-def main(retriever_kind: str, k: int, n_runs: int) -> None:
+def main(retriever_kind: str, k: int, n_runs: int, agent: bool = False) -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Building eval dataset (retriever={retriever_kind}, k={k})...")
-    ds = build_eval_dataset(retriever_kind, k)
+    # When --agent is set, output files are named "agent" regardless of
+    # retriever_kind: the routing happens inside the graph, not via the
+    # caller's choice, so retriever_kind is meaningless in that mode.
+    label = "agent" if agent else retriever_kind
+    print(
+        f"Building eval dataset "
+        f"({'agent (routing)' if agent else f'retriever={retriever_kind}'}, "
+        f"k={k})..."
+    )
+    ds = build_eval_dataset(retriever_kind, k, agent=agent)
     print(f"Dataset: {len(ds.samples)} probes with ground truth")
 
     judge = LangchainLLMWrapper(
@@ -145,7 +177,7 @@ def main(retriever_kind: str, k: int, n_runs: int) -> None:
     base = per_run_dfs[0].copy()
     for c in metric_cols:
         base[c] = mean_per_probe[c]
-    out_csv = RESULTS_DIR / f"ragas_{retriever_kind}_k{k}.csv"
+    out_csv = RESULTS_DIR / f"ragas_{label}_k{k}.csv"
     base.to_csv(out_csv, index=False)
 
     print("\nMean scores (over runs):")
@@ -165,7 +197,8 @@ def main(retriever_kind: str, k: int, n_runs: int) -> None:
     history = {
         "timestamp": dt.datetime.now(dt.timezone.utc).isoformat(),
         "git_sha": _git_sha(),
-        "retriever": retriever_kind,
+        "retriever": label,
+        "agent": agent,
         "k": k,
         "n_runs": n_runs,
         "judge_model": "claude-sonnet-4-5",
@@ -183,7 +216,7 @@ def main(retriever_kind: str, k: int, n_runs: int) -> None:
         "queries": [s.user_input for s in ds.samples],
     }
     ts_safe = history["timestamp"].replace(":", "-")
-    out_json = HISTORY_DIR / f"{ts_safe}_{retriever_kind}_k{k}.json"
+    out_json = HISTORY_DIR / f"{ts_safe}_{label}_k{k}.json"
     out_json.write_text(json.dumps(history, indent=2))
     print(f"History: {out_json}")
 
@@ -202,9 +235,21 @@ def _parse_args() -> argparse.Namespace:
         default=1,
         help="Number of full eval runs to average (smooths judge noise on faith/relevancy)",
     )
+    p.add_argument(
+        "--agent",
+        action="store_true",
+        help="Evaluate the full routing agent (classify -> route -> grade -> "
+        "[retry] -> synthesize) instead of a single retriever. --retriever is "
+        "ignored in this mode.",
+    )
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    main(retriever_kind=args.retriever, k=args.k, n_runs=args.n_runs)
+    main(
+        retriever_kind=args.retriever,
+        k=args.k,
+        n_runs=args.n_runs,
+        agent=args.agent,
+    )
