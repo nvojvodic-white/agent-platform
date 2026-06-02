@@ -63,9 +63,10 @@ flowchart TD
 
 Indices (all gitignored, rebuilt from `data/raw/` via `app/rag/ingestion/`):
 
-- `data/chroma_middle_earth/`: 681 articles, 5793 recursive chunks (800/120), `text-embedding-3-small`. Used by dense and HyDE.
-- `data/chroma_semantic/`: same corpus, 2268 chunks split at embedding-distance topic boundaries via `SemanticChunker`. Used by the semantic route.
-- `data/chroma_pdr/` + `data/pdr_parents.pkl`: 2340 parents (2000-char recursive) and 12378 children (400-char) for parent-document retrieval. Not on the routing path; available as `kind=pdr` for A/B.
+- `data/chroma_middle_earth/`: 2,296 articles, 14,996 recursive chunks (800/120), `text-embedding-3-small`. Used by dense and HyDE.
+- `data/chroma_semantic/`: same corpus, 6,544 chunks split at embedding-distance topic boundaries via `SemanticChunker`. Used by the semantic route.
+- `data/chroma_pdr/` + `data/pdr_parents.pkl`: 6,031 parents (2000-char recursive) and 31,669 children (400-char) for parent-document retrieval. Not on the routing path; available as `kind=pdr` for A/B.
+- Sources: Fandom LotR wiki (631 articles, scraped Day 2 via `action=parse` + BeautifulSoup since Fandom lacks the TextExtracts extension), Wikipedia Middle-earth categories (51 articles, scraped Day 2 + Day 6.5 via `prop=extracts`), Tolkien Gateway (1,614 articles, scraped Day 17 after the original Day-2 block lifted; `prop=extracts`). Each chunk's metadata carries a `source` field so the agent can attribute and the eval can filter.
 
 Classifier accuracy was measured separately on Day 11: **6 of 7 probes routed as pre-registered**; the one apparent miss (Beren & Lúthien) is the pre-registered expectation being wrong, not the classifier (the classifier's reasoning matched the alternative hypothesis written in the same session).
 
@@ -165,7 +166,8 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 
 - **Tuned semantic-cache threshold.** A semantic response cache is wired into `/agent_query` (disabled by default; see the Semantic cache section above), but the 0.97 default threshold is a guess. Tuning it properly requires a paraphrase probe set (multiple phrasings per ground-truth question) and a measured hit-rate / false-positive sweep across 0.90 - 0.99. Smoke test confirmed an exact repeat hits at sim=0.9999 (17.1s -> 0.2s, ~85x latency win) but a paraphrase ("Who slayed Smaug the dragon?" vs "Who killed Smaug?") missed at 0.97. Without the paraphrase eval the threshold is honest noise.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
-- **Tolkien Gateway corpus.** The original plan called for Tolkien Gateway (the canonical fan wiki) as the primary source. It blocks this network with HTTP 403 on every request. Fell back to Fandom LotR wiki + Wikipedia, per source tag in chunk metadata.
+- **RAGAS rerun on the expanded corpus.** The Day-16 agent measurement (faith 0.918 / rel 0.812 / prec 0.889 / recall 0.881) was on the 682-article corpus. The Day-17 Tolkien Gateway add brought it to 2,296 articles (3.4x), which would almost certainly shift those numbers. The headline table is the pre-expansion baseline; a re-eval would settle whether more candidates lifts recall further or hurts precision. Cost ~$5-10 in Claude judge calls, deferred.
+- **Mithril and other Materials.** The Day-17 TG scrape excluded `Category:Materials` (didn't appear in seed-page discovery). Mithril is still covered by the existing Wikipedia article, but TG's potentially richer version isn't in the corpus. A small follow-up scrape adding a few more categories would close this; the per-title dedup in `fetch.py` would skip everything already saved.
 - **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.
 
 ### Quickstart

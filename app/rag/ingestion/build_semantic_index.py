@@ -10,6 +10,7 @@ Separate Chroma collection 'middle_earth_semantic' so it can be A/B'd against
 dense (recursive 800/120) and PDR without disturbing them.
 """
 import json
+import shutil
 import time
 from pathlib import Path
 
@@ -66,6 +67,12 @@ def main() -> None:
         f"Produced {len(chunks)} semantic chunks "
         f"(avg {sum(len(c.page_content) for c in chunks) / len(chunks):.0f} chars)"
     )
+
+    # Wipe-and-rebuild: Chroma(...) opens an existing collection and
+    # add_documents APPENDS, which on re-runs silently duplicates every chunk.
+    if Path(CHROMA_DIR).exists():
+        print(f"Wiping existing {CHROMA_DIR} for clean rebuild...")
+        shutil.rmtree(CHROMA_DIR)
 
     vs = Chroma(
         collection_name=COLLECTION,

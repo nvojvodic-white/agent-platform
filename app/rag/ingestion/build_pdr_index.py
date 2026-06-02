@@ -15,6 +15,7 @@ build_index.py.
 """
 import json
 import pickle
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -90,6 +91,15 @@ def main() -> None:
 
     print(f"Produced {len(parent_store)} parents, {len(children)} children "
           f"(avg child {sum(len(c.page_content) for c in children) / len(children):.0f} chars)")
+
+    # Wipe-and-rebuild: Chroma(...) opens an existing collection and
+    # add_documents APPENDS, which on re-runs silently duplicates every child.
+    # The parent pickle is also stale on re-run (UUIDs change), so delete both.
+    if Path(CHROMA_DIR).exists():
+        print(f"Wiping existing {CHROMA_DIR} for clean rebuild...")
+        shutil.rmtree(CHROMA_DIR)
+    if Path(PARENT_DOCSTORE_PATH).exists():
+        Path(PARENT_DOCSTORE_PATH).unlink()
 
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     vs = Chroma(

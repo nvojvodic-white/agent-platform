@@ -94,6 +94,57 @@ SOURCES = [
             "Category:Middle-earth_objects",
         ],
     ),
+    Source(
+        # Day-16 add. Tolkien Gateway is the canonical fan wiki and was the
+        # original Day-2 primary source, blocked by HTTP 403 on every request
+        # at the time. The block has since lifted; the API works fine now.
+        # Categories below come from a seed-page discovery pass (see commit
+        # message); maintenance categories like "Pages with short description"
+        # and name-language categories (Quenya/Sindarin/Gnomish/Noldorin names)
+        # are deliberately excluded - they'd add duplicates with no new content.
+        # The four "<Age> characters" categories are TG's specialty and cover
+        # the Silmarillion First Age content Fandom basically lacks.
+        name="tolkien_gateway",
+        api_url="https://tolkiengateway.net/w/api.php",
+        site_base="https://tolkiengateway.net/wiki/",
+        fetch_mode="extracts",
+        categories=[
+            # Characters by book
+            "Category:Characters in The Lord of the Rings",
+            "Category:Characters in The Hobbit",
+            "Category:Characters in The Silmarillion",
+            "Category:Characters in The Adventures of Tom Bombadil",
+            # Characters by age (TG's strength vs Fandom)
+            "Category:First Age characters",
+            "Category:Second Age characters",
+            "Category:Third Age characters",
+            "Category:Fourth Age characters",
+            # Places
+            "Category:Regions",
+            "Category:Sindarin locations",
+            "Category:Gondor",
+            "Category:Arnor",
+            "Category:Eriador",
+            # Peoples / lineages
+            "Category:Edain",
+            "Category:Númenóreans",
+            "Category:Dúnedain",
+            "Category:House of Isildur",
+            "Category:House of Bëor",
+            # Conflicts (the categories Day 2 totally missed on Fandom too)
+            "Category:Conflicts of the War of the Ring",
+            "Category:Sieges",
+            # Artifacts (canonical-wiki advantage: Silmarils, Andúril, etc.)
+            "Category:Rings and jewels",
+            "Category:Swords",
+            "Category:Heirlooms",
+            # Misc useful
+            "Category:Enigmas",  # Bombadil et al.
+            "Category:Spirits",
+            "Category:Rulers of Gondor",
+            "Category:Rulers of Arnor",
+        ],
+    ),
 ]
 
 
@@ -266,11 +317,29 @@ def fetch_source(source: Source) -> None:
     )
 
 
-def main() -> None:
+def main(only: str | None = None) -> None:
+    """When `only` is set, fetch just that source by name (one of:
+    fandom_lotr, wikipedia, tolkien_gateway). Default iterates everything.
+    Use --source to avoid re-fetching sources whose data/raw/<name>/ already
+    exists (the per-title skip in fetch_source checks AFTER the API call, so
+    re-running ALL is wasteful even when files are cached on disk)."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for source in SOURCES:
+    sources = [s for s in SOURCES if only is None or s.name == only]
+    if not sources:
+        names = ", ".join(s.name for s in SOURCES)
+        raise SystemExit(f"unknown source {only!r}; valid: {names}")
+    for source in sources:
         fetch_source(source)
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--source",
+        default=None,
+        help="Fetch only this source. Default: all. "
+        "Choices: fandom_lotr, wikipedia, tolkien_gateway.",
+    )
+    args = p.parse_args()
+    main(only=args.source)

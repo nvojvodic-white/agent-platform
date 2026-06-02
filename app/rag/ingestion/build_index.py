@@ -1,6 +1,7 @@
 """Chunk Middle-earth articles and build a Chroma index."""
 import json
 import pickle
+import shutil
 import time
 from pathlib import Path
 
@@ -18,10 +19,10 @@ load_dotenv()
 RAW_DIR = Path("data/raw")
 CHROMA_DIR = "data/chroma_middle_earth"
 COLLECTION = "middle_earth"
-# Throttled to stay under OpenAI free-tier 40k TPM ceiling for text-embedding-3-small.
-# ~50 chunks/batch * ~600 chars ≈ 7.5k tokens, sleeping 12s -> ~37k TPM with headroom.
-EMBED_BATCH = 50
-BATCH_SLEEP_SEC = 12
+# Account is on the 1M TPM tier (Day 9 probe). Our throughput (~15k tokens/batch)
+# is far under that, so a small safety sleep is plenty. Matches build_pdr_index.
+EMBED_BATCH = 100
+BATCH_SLEEP_SEC = 1
 
 
 def load_documents() -> list[Document]:
@@ -67,6 +68,14 @@ def main() -> None:
         f"{sum(len(c.page_content) for c in chunks) / len(chunks):.0f} chars"
     )
     print(f"Sample chunk:\n{chunks[0].page_content[:300]}...\n")
+
+    # Wipe-and-rebuild. Chroma(...) opens an EXISTING collection; subsequent
+    # add_documents APPENDS, which on a re-run silently produces duplicate
+    # chunks (every original chunk gets a second copy alongside any new ones).
+    # Delete the persist_directory so the re-created Chroma starts empty.
+    if Path(CHROMA_DIR).exists():
+        print(f"Wiping existing {CHROMA_DIR} for clean rebuild...")
+        shutil.rmtree(CHROMA_DIR)
 
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     vs = Chroma(

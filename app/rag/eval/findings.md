@@ -1,5 +1,93 @@
 # RAG findings
 
+## Day 17: Tolkien Gateway corpus expansion (3.4x articles, 2.6x chunks)
+
+A friend pointed out Tolkien Gateway runs MediaWiki, so the API should be
+reachable. The Day-2 block (HTTP 403 on every TG request from this network)
+has lifted in the intervening weeks: a simple curl probe returned 200 with
+a valid JSON category response. We re-attempted the original Day-2 plan and
+scraped TG into the corpus.
+
+**Category discovery was the load-bearing methodology change.** Naive guesses
+of TG category names (`Realms`, `Kings`, `Battles`) all returned 0 because
+TG categorises by **age** (First/Second/Third/Fourth Age characters) and
+**book** (Characters in LotR / Hobbit / Silmarillion) rather than by
+type. To discover the real category structure, we used a seed-page method:
+take known-good articles (Gondor, Aragorn, Helm's Deep, Silmaril, Bombadil),
+ask the API which categories each one belongs to, filter to categories with
+>=10 members. That surfaced 44 real content categories; 27 were selected
+after dropping maintenance categories (`Pages with short description`,
+`Articles needing citation`) and name-language ones (`Quenya names`,
+`Sindarin names`) which would have produced massive intra-corpus duplication
+with no new content.
+
+**Scrape results:** 1,736 unique titles discovered across 27 categories ->
+1,614 articles saved (122 skipped as too-short stubs or canonical-title
+dedups within TG). Total corpus jumped from 682 articles (Fandom 631 + WP 51)
+to **2,296 articles (1,614 + 631 + 51), a 3.4x increase.**
+
+**Index rebuilds:**
+
+| index | before | after | growth |
+|---|---|---|---|
+| dense (chroma_middle_earth) | 5,793 chunks | 14,996 chunks | 2.59x |
+| semantic (chroma_semantic) | 2,268 chunks | 6,544 chunks | 2.89x |
+| PDR (chroma_pdr) | 2,340 parents / 12,378 children | 6,031 parents / 31,669 children | 2.58x |
+
+**Real bug found and fixed during the rebuild.** All three builders use
+`Chroma(...)` + `add_documents(...)` instead of `Chroma.from_documents(...)`.
+That opens an existing collection and APPENDS, so a naive re-ingest would
+have produced the original 5,793 chunks PLUS another full pass of the same
+chunks PLUS the new TG chunks (~20,000 with 50% duplicates), silently
+breaking retrieval ranking. Added `shutil.rmtree(CHROMA_DIR)` at the top of
+each builder's main() so re-runs are wipe-and-rebuild instead of append.
+PDR's builder also unlinks `data/pdr_parents.pkl` since the parent UUIDs
+change on rebuild and a stale pickle would point at non-existent Chroma
+entries. This is the kind of bug that would have rotted the index silently
+over weeks of re-runs in production; better to catch it on a planned
+re-ingest than after the fact.
+
+**Per-probe dense retrieval sanity check (post-rebuild):**
+
+| probe | top-4 sources | gap closure |
+|---|---|---|
+| Tom Bombadil | wikipedia x 1 + tolkien_gateway x 3 (all titled "Tom Bombadil") | TG's 16.8 KB article corroborates the Day 6.5 WP fix |
+| Who killed Smaug? | tolkien_gateway:Bilbo + wikipedia:Dragons + fandom:Thorin + tolkien_gateway:Battle of Five Armies | TG Battle article cleaner than Day 3 Fandom (no maintenance template noise) |
+| Beren and Luthien | **tolkien_gateway:Beren x 2** + tolkien_gateway:Lúthien + fandom:Lúthien | **Day 3's 'no standalone Beren article' gap closed.** Beren now appears at ranks 1 AND 2. |
+| What is mithril? | wikipedia:Mithril x 4 | control: TG missed via Category:Materials exclusion, WP still covers it. No regression. |
+
+The Beren result is the most concrete gap closure: Day 3 explicitly noted
+"the corpus has a 'Lúthien' article but no standalone 'Beren' one" and
+reclassified the Beren probe as a corpus-coverage limit. That limit is now
+gone; a standalone Beren article exists and ranks first on the probe.
+
+**One real miss worth being honest about:** Mithril was in TG's
+`Category:Materials` which I excluded from the scrape (didn't appear in
+seed-page discovery; I didn't use Mithril as a seed). The Wikipedia article
+from Day 2 still covers Mithril, so the topic isn't lost, but TG's
+potentially richer Mithril article isn't in the corpus. Same probably true
+for other concepts in categories my discovery pass missed. Acceptable
+tradeoff for this batch; a future iteration could add `Category:Materials`
++ a few more and re-scrape just the new ones (the per-title dedup in
+fetch.py would skip everything already saved).
+
+**One real surprise:** Bard's standalone TG article (`Bard.json`) is now in
+the corpus, but it didn't make the top-4 for "Who killed Smaug?" under dense
+retrieval. The question phrasing doesn't have strong semantic proximity to
+Bard's own article text. The routing agent's `multi_hop -> hyde` path
+(Day 8) would generate a hypothetical answer mentioning "Bard the Bowman"
+and likely surface the article. Not blocking; worth re-checking when next
+the agent endpoint gets exercised.
+
+**Skipped (deliberate, per request):** re-running RAGAS over the expanded
+corpus. The agent measurement from Day 16 (faith 0.918 / rel 0.812 / prec
+0.889 / recall 0.881) was on the 682-article corpus; the larger 2,296-
+article corpus would almost certainly shift those numbers. The Day-16 row
+in the README headline table is now stale relative to the underlying corpus.
+A future re-eval would settle whether the corpus expansion lifts recall
+further or hurts precision (more candidates = more on-topic noise to filter).
+Cost would be ~$5-10 in Claude judge calls; deferred for now.
+
 ## Day 16: RAGAS over the routing agent (the deferred row, filled)
 
 Ran `ragas_eval.py --agent` (new flag, in-process `get_agent()` path,
