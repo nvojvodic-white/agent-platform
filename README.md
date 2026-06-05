@@ -34,7 +34,7 @@ Per-route observations:
 - Multi-query is indistinguishable from dense once the variant union is re-ranked by similarity to the original query. Pays an LLM cost for no measurable gain on this corpus.
 - Parent-document retrieval regressed recall (0.595): dedup-by-parent diversifies away from articles where ground-truth facts are concentrated.
 - Sparse (BM25 with custom preprocessor) loses every metric. Brittle on this corpus.
-- **Agent (routing) wins recall outright (0.881)** by composing the recall wins of multiple retrievers per probe: Mithril and Bombadil go to 1.0 (semantic's territory), Smaug and Battle of Five Armies go to 1.0 (dense's territory). No single retriever beats 0.833; routing breaks the ceiling. The cost is faithfulness (0.918 vs semantic's 0.988): when the agent retries on a poor grade, the rewrite + second retrieval injects mildly noisier context and the synthesizer makes more claims the judge cannot fully entail. The Day-12 latency budget already flagged the routing agent at ~14s end-to-end (cold), so this is a quality-vs-speed-vs-cost three-way tradeoff, not a free win.
+- **Agent (routing) wins recall outright (0.881)** by composing the recall wins of multiple retrievers per probe: Mithril and Bombadil go to 1.0 (semantic's territory), Smaug and Battle of Five Armies go to 1.0 (dense's territory). No single retriever beats 0.833; routing breaks the ceiling. The cost is faithfulness (0.918 vs semantic's 0.988): when the agent retries on a poor grade, the rewrite + second retrieval injects mildly noisier context and the synthesizer makes more claims the judge cannot fully entail. The latency budget already flagged the routing agent at ~14s end-to-end (cold), so this is a quality-vs-speed-vs-cost three-way tradeoff, not a free win.
 
 ### What the agent does
 
@@ -70,29 +70,29 @@ Indices (all gitignored, rebuilt from `data/raw/` via `app/rag/ingestion/`):
 - `data/chroma_middle_earth/`: 2,296 articles, 14,996 recursive chunks (800/120), `text-embedding-3-small`. Used by dense and HyDE.
 - `data/chroma_semantic/`: same corpus, 6,544 chunks split at embedding-distance topic boundaries via `SemanticChunker`. Used by the semantic route.
 - `data/chroma_pdr/` + `data/pdr_parents.pkl`: 6,031 parents (2000-char recursive) and 31,669 children (400-char) for parent-document retrieval. Not on the routing path; available as `kind=pdr` for A/B.
-- Sources: Fandom LotR wiki (631 articles, scraped Day 2 via `action=parse` + BeautifulSoup since Fandom lacks the TextExtracts extension), Wikipedia Middle-earth categories (51 articles, scraped Day 2 + Day 6.5 via `prop=extracts`), Tolkien Gateway (1,614 articles, scraped Day 17 after the original Day-2 block lifted; `prop=extracts`). Each chunk's metadata carries a `source` field so the agent can attribute and the eval can filter.
+- Sources: Fandom LotR wiki (631 articles, scraped via `action=parse` + BeautifulSoup since Fandom lacks the TextExtracts extension), Wikipedia Middle-earth categories (51 articles, scraped in two passes via `prop=extracts`), Tolkien Gateway (1,614 articles, scraped after the original block on TG's endpoint lifted; `prop=extracts`). Each chunk's metadata carries a `source` field so the agent can attribute and the eval can filter.
 
-Classifier accuracy was measured separately on Day 11: **6 of 7 probes routed as pre-registered**; the one apparent miss (Beren & Lúthien) is the pre-registered expectation being wrong, not the classifier (the classifier's reasoning matched the alternative hypothesis written in the same session).
+Classifier accuracy was measured separately: **6 of 7 probes routed as pre-registered**; the one apparent miss (Beren & Lúthien) is the pre-registered expectation being wrong, not the classifier (the classifier's reasoning matched the alternative hypothesis written in the same session).
 
 ### Methodology and judgment
 
-The repo's substance lives in [`app/rag/eval/findings.md`](app/rag/eval/findings.md), which carries day-by-day notes for every intervention with deltas, regressions, falsified hypotheses, and the failure-mode taxonomy that drove the routing design:
+The repo's substance lives in [`app/rag/eval/findings.md`](app/rag/eval/findings.md), which carries detailed notes for every intervention with deltas, regressions, falsified hypotheses, and the failure-mode taxonomy that drove the routing design:
 
 - `synthesis-recovered`: retrieval looked imperfect but the LLM bridged the gap (Smaug, Beren).
 - `candidate-set-miss-fixable`: dense missed the right document, hybrid or HyDE found it (Smaug, Mithril at the retrieval layer).
-- `candidate-set-miss-corpus-gap`: no retriever could find it because the document was absent (Bombadil on Day 6, closed by Day 6.5 corpus add).
+- `candidate-set-miss-corpus-gap`: no retriever could find it because the document was absent (Bombadil initially, closed by a later corpus add).
 - `hybrid-regressed`: hybrid hurt a query dense already solved (Gandalf, Battle).
 - `dense-already-optimal`: nothing measurably helped (Mithril at the answer layer, Gandalf).
 
 Methodology details worth flagging:
 
-- **Pre-registration.** Route categorizations and outcome predictions were written before each measurement. On Day 11 the classifier appeared to "miss" Beren & Lúthien; checking the pre-registered prediction reclassified the miss as a hit against the plan's later hypothesis.
+- **Pre-registration.** Route categorizations and outcome predictions were written before each measurement. On one probe the classifier appeared to "miss" Beren & Lúthien; checking the pre-registered prediction reclassified the miss as a hit against the plan's later hypothesis.
 - **Variance bands.** RAGAS context metrics are deterministic; faithfulness and answer_relevancy carry ~0.04 judge variance per run. `app/rag/eval/compare_to_baseline.py` flags deltas only when they exceed `max(0.02, 2 * baseline_std)`.
-- **Falsified hypotheses are kept in the record.** The Day 2 "BM25 will rescue Tom Bombadil" thesis was falsified twice (first by a corpus gap, then by the measurement after the gap was closed). Both falsifications are in findings.md verbatim.
+- **Falsified hypotheses are kept in the record.** The early "BM25 will rescue Tom Bombadil" thesis was falsified twice (first by a corpus gap, then by the measurement after the gap was closed). Both falsifications are in findings.md verbatim.
 
 ### Latency budget
 
-End-to-end agent latency was measured per-node on Day 12 via a `@timed` decorator (`app/rag/eval/measure_latency.py`). One full agent invocation, cold, k=4:
+End-to-end agent latency was measured per-node via a `@timed` decorator (`app/rag/eval/measure_latency.py`). One full agent invocation, cold, k=4:
 
 | node | mean ms | notes |
 |---|---:|---|
@@ -110,7 +110,7 @@ End-to-end agent latency was measured per-node on Day 12 via a `@timed` decorato
 
 A parallel async path at `POST /api/v1/rag/agent_query_stream` returns Server-Sent Events: a single `metadata` frame (route, grade, trace, sources) emitted before the LLM starts streaming, then `token` frames yielded as Claude generates, then `answer_complete` (full text for downstream consumers), then `done`. Total end-to-end latency is unchanged (~14s cold) but time-to-first-byte drops to ~5s (classify + retrieve + grade), and the UI gets the route + sources at t=0 to fill the synthesize gap.
 
-Implementation lives in `app/rag/agent/graph_streaming.py`: async versions of the four orchestration nodes (`aclassify_query`, `aretrieve`, `agrade_documents`, `arewrite_query`) plus `synthesize_streaming` as an async generator that runs *outside* the compiled graph (graphs return state, not streams). The non-streaming `build_agent()` / `/agent_query` / `/agent_query_debug` paths are preserved byte-identical so RAGAS, the Day-11 probe sweep, and any A/B caller continue to work.
+Implementation lives in `app/rag/agent/graph_streaming.py`: async versions of the four orchestration nodes (`aclassify_query`, `aretrieve`, `agrade_documents`, `arewrite_query`) plus `synthesize_streaming` as an async generator that runs *outside* the compiled graph (graphs return state, not streams). The non-streaming `build_agent()` / `/agent_query` / `/agent_query_debug` paths are preserved byte-identical so RAGAS, the probe sweep, and any A/B caller continue to work.
 
 ```bash
 curl -N -X POST localhost:8000/api/v1/rag/agent_query_stream \
@@ -138,7 +138,7 @@ for q in "Who is Smaug?" "Who killed him?" "With what weapon?"; do
 done
 ```
 
-In the smoke run: turn 2 (`Who killed him?`) resolves to `Who killed Smaug?` and the classifier flips the route from `definitional` to `multi_hop`, which routes to HyDE (the Day-8 measured winner for this question shape). Memory + routing-by-question-type compose: the pronoun resolution is what makes the route flip even possible.
+In the smoke run: turn 2 (`Who killed him?`) resolves to `Who killed Smaug?` and the classifier flips the route from `definitional` to `multi_hop`, which routes to HyDE (the measured winner for this question shape). Memory + routing-by-question-type compose: the pronoun resolution is what makes the route flip even possible.
 
 ### Semantic cache (opt-in)
 
@@ -170,8 +170,8 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 
 - **Tuned semantic-cache threshold.** A semantic response cache is wired into `/agent_query` (disabled by default; see the Semantic cache section above), but the 0.97 default threshold is a guess. Tuning it properly requires a paraphrase probe set (multiple phrasings per ground-truth question) and a measured hit-rate / false-positive sweep across 0.90 - 0.99. Smoke test confirmed an exact repeat hits at sim=0.9999 (17.1s -> 0.2s, ~85x latency win) but a paraphrase ("Who slayed Smaug the dragon?" vs "Who killed Smaug?") missed at 0.97. Without the paraphrase eval the threshold is honest noise.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
-- **RAGAS rerun on the expanded corpus.** The Day-16 agent measurement (faith 0.918 / rel 0.812 / prec 0.889 / recall 0.881) was on the 682-article corpus. The Day-17 Tolkien Gateway add brought it to 2,296 articles (3.4x), which would almost certainly shift those numbers. The headline table is the pre-expansion baseline; a re-eval would settle whether more candidates lifts recall further or hurts precision. Cost ~$5-10 in Claude judge calls, deferred.
-- **Mithril and other Materials.** The Day-17 TG scrape excluded `Category:Materials` (didn't appear in seed-page discovery). Mithril is still covered by the existing Wikipedia article, but TG's potentially richer version isn't in the corpus. A small follow-up scrape adding a few more categories would close this; the per-title dedup in `fetch.py` would skip everything already saved.
+- **RAGAS rerun on the expanded corpus.** The agent measurement above (faith 0.918 / rel 0.812 / prec 0.889 / recall 0.881) was on the 682-article corpus. The subsequent Tolkien Gateway add brought it to 2,296 articles (3.4x), which would almost certainly shift those numbers. The headline table is the pre-expansion baseline; a re-eval would settle whether more candidates lifts recall further or hurts precision. Cost ~$5-10 in Claude judge calls, deferred.
+- **Mithril and other Materials.** The TG scrape excluded `Category:Materials` (didn't appear in seed-page discovery). Mithril is still covered by the existing Wikipedia article, but TG's potentially richer version isn't in the corpus. A small follow-up scrape adding a few more categories would close this; the per-title dedup in `fetch.py` would skip everything already saved.
 - **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.
 
 ### Quickstart
@@ -205,7 +205,7 @@ curl -X POST localhost:8000/api/v1/rag/agent_query_debug \
 
 ```
 app/rag/
-├── chain/           # rag_chain.py + prompts.py (Day 5 strict_hedge system prompt)
+├── chain/           # rag_chain.py + prompts.py (strict_hedge system prompt)
 ├── retrieval/       # vectorstore.py (dense/sparse/hybrid), hyde.py, multi_query.py,
 │                    # pdr.py, semantic.py: all behind get_retriever(kind=...)
 ├── agent/           # graph.py: LangGraph routing state machine
