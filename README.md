@@ -2,10 +2,14 @@
 
 A self-hosted Claude-powered platform with two halves that share one FastAPI service:
 
-1. **Measured Agentic RAG** (`app/rag/`): a Middle-earth lore RAG with a LangGraph routing agent. Each query is classified and dispatched to the retriever measured to perform best on that question shape (semantic for definitional, HyDE for multi-hop, dense for general), graded for relevance, and optionally retried. Built over 12 days of measured iteration with RAGAS scores at every step.
+1. **Measured Agentic RAG** (`app/rag/`): a Middle-earth lore RAG with a LangGraph routing agent. Each query is classified and dispatched to the retriever measured to perform best on that question shape (semantic for definitional, HyDE for multi-hop, dense for general), graded for relevance, and optionally retried. Every routing and retrieval choice is backed by RAGAS scores.
 2. **Production platform** (`app/agent/`, `app/tools/`, `app/observability/`, `helm/`, `k8s/`, `.github/`): the original multi-turn Claude tool-use agent with OpenTelemetry tracing, Prometheus metrics, Grafana dashboards, Kubernetes deployment via Helm, and a React UI.
 
 The RAG service is exposed alongside the agent on the same API: `POST /api/v1/rag/query` (single retriever) and `POST /api/v1/rag/agent_query` (routing agent).
+
+## Architecture
+
+![Agent Platform Architecture](docs/Agent%20Architecture.png)
 
 ## Measured Agentic RAG
 
