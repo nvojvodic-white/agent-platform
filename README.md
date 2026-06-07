@@ -15,7 +15,7 @@ The RAG service is exposed alongside the agent on the same API: `POST /api/v1/ra
 
 ### Headline result
 
-RAGAS scores over 7 in-corpus probes, k=4, judge = Claude `claude-sonnet-4-5`, single-run (judge noise on faithfulness/relevancy is ~0.04 run-to-run; context metrics are deterministic given fixed retrieval).
+RAGAS scores over 7 in-corpus probes, k=4, judge = Claude `claude-sonnet-4-5`, single-run (judge noise on faithfulness/relevancy is ~0.04 run-to-run; context metrics are deterministic given fixed retrieval). Corpus: original 682-article snapshot (Fandom + Wikipedia, pre-Tolkien-Gateway expansion). See "Expanded corpus re-eval" below for dense and turbovec on the current 2,296-article corpus.
 
 | retriever | faithfulness | answer_relevancy | ctx_precision | ctx_recall |
 |---|---:|---:|---:|---:|
@@ -35,6 +35,21 @@ Per-route observations:
 - Parent-document retrieval regressed recall (0.595): dedup-by-parent diversifies away from articles where ground-truth facts are concentrated.
 - Sparse (BM25 with custom preprocessor) loses every metric. Brittle on this corpus.
 - **Agent (routing) wins recall outright (0.881)** by composing the recall wins of multiple retrievers per probe: Mithril and Bombadil go to 1.0 (semantic's territory), Smaug and Battle of Five Armies go to 1.0 (dense's territory). No single retriever beats 0.833; routing breaks the ceiling. The cost is faithfulness (0.918 vs semantic's 0.988): when the agent retries on a poor grade, the rewrite + second retrieval injects mildly noisier context and the synthesizer makes more claims the judge cannot fully entail. The latency budget already flagged the routing agent at ~14s end-to-end (cold), so this is a quality-vs-speed-vs-cost three-way tradeoff, not a free win.
+
+### Expanded corpus re-eval (dense + turbovec)
+
+Closing the "RAGAS rerun on the expanded corpus" deferred item. Same 7 probes, same judge, same k=4, but the 2,296-article corpus (Fandom + Wikipedia + Tolkien Gateway, 14,996 chunks) instead of the 682-article original. Also adds a turbovec row: a 4-bit TurboQuant index (`turbovec==0.7.0`, ~8x smaller in-memory footprint than float32: 11.1 MiB vs ~92 MB) over the same chunks, isolating the storage / index format as the only variable vs. dense.
+
+| retriever | corpus | faithfulness | answer_relevancy | ctx_precision | ctx_recall |
+|---|---|---:|---:|---:|---:|
+| dense (baseline, original) | 682 art | 0.949 | 0.801 | 0.881 | 0.821 |
+| dense (re-eval) | 2,296 art | **0.984** | **0.850** | 0.627 | 0.560 |
+| turbovec (4-bit) | 2,296 art | 0.925 | 0.787 | **0.671** | 0.476 |
+
+Two findings worth surfacing:
+
+- **The 3.4x corpus expansion alone dropped dense precision by 0.254 and recall by 0.261**, while lifting faithfulness (+0.035) and answer_relevancy (+0.049). More candidates competing for the top-k slots means less-targeted chunks creep in. The lifted synthesis-stage metrics are consistent with the LLM having richer (if noisier) context to work from. This was the question the headline table couldn't answer without a re-eval.
+- **Turbovec is not a strict regression on the same corpus.** It beats current dense on precision (+0.044) while losing on recall (-0.084), faithfulness (-0.059), and answer_relevancy (-0.063). The 4-bit quantization makes vector distances approximate: smoke-tested across 6 probes, turbovec returns the same top-4 *source articles* as dense, but the specific *chunks* it picks within those articles are shifted by quantization noise, and on this corpus that shift happens to be precision-improving / recall-degrading. Bottom line: the ~8x memory win comes with a real but mixed retrieval-quality cost, and the tradeoff inverts at corpora large enough that float32 vectors don't fit in RAM.
 
 ### What the agent does
 
@@ -70,6 +85,7 @@ Indices (all gitignored, rebuilt from `data/raw/` via `app/rag/ingestion/`):
 - `data/chroma_middle_earth/`: 2,296 articles, 14,996 recursive chunks (800/120), `text-embedding-3-small`. Used by dense and HyDE.
 - `data/chroma_semantic/`: same corpus, 6,544 chunks split at embedding-distance topic boundaries via `SemanticChunker`. Used by the semantic route.
 - `data/chroma_pdr/` + `data/pdr_parents.pkl`: 6,031 parents (2000-char recursive) and 31,669 children (400-char) for parent-document retrieval. Not on the routing path; available as `kind=pdr` for A/B.
+- `data/turbovec_index.tq`: TurboQuant 4-bit quantized index (community Rust impl of Google Research's TurboQuant algorithm) over the same chunks as `chroma_middle_earth`. Isolates storage / index format (HNSW vs PQ-style quantization) as the only variable vs. the dense baseline. Not on the routing path; available as `kind=turbovec` for A/B.
 - Sources: Fandom LotR wiki (631 articles, scraped via `action=parse` + BeautifulSoup since Fandom lacks the TextExtracts extension), Wikipedia Middle-earth categories (51 articles, scraped in two passes via `prop=extracts`), Tolkien Gateway (1,614 articles, scraped after the original block on TG's endpoint lifted; `prop=extracts`). Each chunk's metadata carries a `source` field so the agent can attribute and the eval can filter.
 
 Classifier accuracy was measured separately: **6 of 7 probes routed as pre-registered**; the one apparent miss (Beren & Lúthien) is the pre-registered expectation being wrong, not the classifier (the classifier's reasoning matched the alternative hypothesis written in the same session).
@@ -170,7 +186,7 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 
 - **Tuned semantic-cache threshold.** A semantic response cache is wired into `/agent_query` (disabled by default; see the Semantic cache section above), but the 0.97 default threshold is a guess. Tuning it properly requires a paraphrase probe set (multiple phrasings per ground-truth question) and a measured hit-rate / false-positive sweep across 0.90 - 0.99. Smoke test confirmed an exact repeat hits at sim=0.9999 (17.1s -> 0.2s, ~85x latency win) but a paraphrase ("Who slayed Smaug the dragon?" vs "Who killed Smaug?") missed at 0.97. Without the paraphrase eval the threshold is honest noise.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
-- **RAGAS rerun on the expanded corpus.** The agent measurement above (faith 0.918 / rel 0.812 / prec 0.889 / recall 0.881) was on the 682-article corpus. The subsequent Tolkien Gateway add brought it to 2,296 articles (3.4x), which would almost certainly shift those numbers. The headline table is the pre-expansion baseline; a re-eval would settle whether more candidates lifts recall further or hurts precision. Cost ~$5-10 in Claude judge calls, deferred.
+- **RAGAS rerun on the expanded corpus — agent row.** The dense and turbovec rows have been re-measured on the 2,296-article corpus (see "Expanded corpus re-eval" above), confirming that the expansion materially lowers context_precision and context_recall while lifting faithfulness and answer_relevancy. The agent row (faith 0.918 / rel 0.812 / prec 0.889 / recall 0.881) is still on the original 682-article corpus; re-running it would settle whether the agent's recall-composition wins survive the noisier candidate pool.
 - **Mithril and other Materials.** The TG scrape excluded `Category:Materials` (didn't appear in seed-page discovery). Mithril is still covered by the existing Wikipedia article, but TG's potentially richer version isn't in the corpus. A small follow-up scrape adding a few more categories would close this; the per-title dedup in `fetch.py` would skip everything already saved.
 - **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.
 

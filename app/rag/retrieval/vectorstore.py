@@ -110,7 +110,8 @@ def get_hybrid_retriever(
 def get_retriever(k: int = 4, kind: str = "dense") -> BaseRetriever:
     """Swappable retriever factory.
 
-    kind in {dense, sparse, hybrid (50/50), hybrid_40_60, hyde, multi_query}.
+    kind in {dense, sparse, hybrid (50/50), hybrid_40_60, hyde, multi_query,
+    pdr, semantic, turbovec}.
     """
     if kind == "sparse":
         return get_sparse_retriever(k=k)
@@ -134,4 +135,8 @@ def get_retriever(k: int = 4, kind: str = "dense") -> BaseRetriever:
         from app.rag.retrieval.semantic import get_semantic_retriever
 
         return get_semantic_retriever(k=k)
+    if kind == "turbovec":
+        from app.rag.retrieval.turbovec import get_turbovec_retriever
+
+        return get_turbovec_retriever(k=k)
     return get_dense_retriever(k=k)

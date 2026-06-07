@@ -90,7 +90,7 @@ ROUTE_TO_RETRIEVER: dict[Route, str] = {
 # --- classify ---------------------------------------------------------------
 
 classifier_llm = ChatAnthropic(
-    model="claude-sonnet-4-5", max_tokens=200, max_retries=5
+    model="claude-haiku-4-5", max_tokens=200, max_retries=5
 )
 
 
@@ -171,7 +171,7 @@ def retrieve(state: AgentState) -> dict:
 # --- grade ------------------------------------------------------------------
 
 grade_llm = ChatAnthropic(
-    model="claude-sonnet-4-5", max_tokens=300, max_retries=5
+    model="claude-haiku-4-5", max_tokens=300, max_retries=5
 )
 
 
