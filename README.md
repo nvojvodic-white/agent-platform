@@ -45,11 +45,13 @@ Closing the "RAGAS rerun on the expanded corpus" deferred item. Same 7 probes, s
 | dense (baseline, original) | 682 art | 0.949 | 0.801 | 0.881 | 0.821 |
 | dense (re-eval) | 2,296 art | **0.984** | **0.850** | 0.627 | 0.560 |
 | turbovec (4-bit) | 2,296 art | 0.925 | 0.787 | **0.671** | 0.476 |
+| agent (re-eval) | 2,296 art | 0.955 | 0.706 | 0.651 | **0.786** |
 
-Two findings worth surfacing:
+Three findings worth surfacing:
 
 - **The 3.4x corpus expansion alone dropped dense precision by 0.254 and recall by 0.261**, while lifting faithfulness (+0.035) and answer_relevancy (+0.049). More candidates competing for the top-k slots means less-targeted chunks creep in. The lifted synthesis-stage metrics are consistent with the LLM having richer (if noisier) context to work from. This was the question the headline table couldn't answer without a re-eval.
 - **Turbovec is not a strict regression on the same corpus.** It beats current dense on precision (+0.044) while losing on recall (-0.084), faithfulness (-0.059), and answer_relevancy (-0.063). The 4-bit quantization makes vector distances approximate: smoke-tested across 6 probes, turbovec returns the same top-4 *source articles* as dense, but the specific *chunks* it picks within those articles are shifted by quantization noise, and on this corpus that shift happens to be precision-improving / recall-degrading. Bottom line: the ~8x memory win comes with a real but mixed retrieval-quality cost, and the tradeoff inverts at corpora large enough that float32 vectors don't fit in RAM.
+- **The agent's recall-composition win survives the corpus expansion.** Agent recall is 0.786 vs dense's 0.560 on the same corpus, a +0.226 advantage — slightly narrower than the original +0.060 over dense's old recall but proportionally larger. answer_relevancy drops to 0.706 because one probe (Battle of Five Armies) returned 0.0 across every context metric on the new corpus and dragged the mean; dense hit the same outlier (also 0.0 / 0.0 on Battle), so it's a corpus artefact, not an agent regression. Excluding Battle, the agent averages relevancy ~0.82.
 
 ### What the agent does
 
@@ -112,19 +114,19 @@ End-to-end agent latency was measured per-node via a `@timed` decorator (`app/ra
 
 | node | mean ms | notes |
 |---|---:|---|
-| classify | ~2500 | Claude call, small prompt |
+| classify | ~1300 | Claude Haiku 4.5, small prompt (was ~2500 on Sonnet) |
 | retrieve (dense) | ~260 | OpenAI embed + Chroma similarity |
 | retrieve (semantic) | ~1000 | same path, slightly larger chunks |
-| retrieve (hyde) | ~6100 | adds a hypothetical-generation Claude call |
-| grade | ~3000 | Claude call, ~2KB prompt |
-| synthesize | ~7000 | Claude call, ~1KB output |
-| **total** | **~14000** | end-to-end per query, cold |
+| retrieve (hyde) | ~6100 | adds a hypothetical-generation Claude call (Sonnet) |
+| grade | ~1400 | Claude Haiku 4.5, ~2KB prompt (was ~3000 on Sonnet) |
+| synthesize | ~7500 | Claude Sonnet 4.5, ~1KB output |
+| **total** | **~10800** | end-to-end per query, cold (was ~14000 pre-Haiku-swap) |
 
 `@lru_cache(256)` on `(question, route, k)` makes warm-pass retrieval cost zero. Worth ~5-6s on HyDE-routed probes (Smaug 14.8 to 9.8 seconds); negligible on dense routes (already 260ms). Semantic-similarity caching is deferred (exact-string LRU catches every demo-loop hit and avoids the silent-wrong-answer mode of fuzzy-match caches; worth revisiting under production traffic).
 
 ### Streaming endpoint
 
-A parallel async path at `POST /api/v1/rag/agent_query_stream` returns Server-Sent Events: a single `metadata` frame (route, grade, trace, sources) emitted before the LLM starts streaming, then `token` frames yielded as Claude generates, then `answer_complete` (full text for downstream consumers), then `done`. Total end-to-end latency is unchanged (~14s cold) but time-to-first-byte drops to ~5s (classify + retrieve + grade), and the UI gets the route + sources at t=0 to fill the synthesize gap.
+A parallel async path at `POST /api/v1/rag/agent_query_stream` returns Server-Sent Events: a single `metadata` frame (route, grade, trace, sources) emitted before the LLM starts streaming, then `token` frames yielded as Claude generates, then `answer_complete` (full text for downstream consumers), then `done`. Total end-to-end latency is ~11s cold; time-to-first-byte drops to ~3s (classify + retrieve + grade — Haiku-backed for both), and the UI gets the route + sources at t=0 to fill the synthesize gap.
 
 Implementation lives in `app/rag/agent/graph_streaming.py`: async versions of the four orchestration nodes (`aclassify_query`, `aretrieve`, `agrade_documents`, `arewrite_query`) plus `synthesize_streaming` as an async generator that runs *outside* the compiled graph (graphs return state, not streams). The non-streaming `build_agent()` / `/agent_query` / `/agent_query_debug` paths are preserved byte-identical so RAGAS, the probe sweep, and any A/B caller continue to work.
 
@@ -186,7 +188,7 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 
 - **Tuned semantic-cache threshold.** A semantic response cache is wired into `/agent_query` (disabled by default; see the Semantic cache section above), but the 0.97 default threshold is a guess. Tuning it properly requires a paraphrase probe set (multiple phrasings per ground-truth question) and a measured hit-rate / false-positive sweep across 0.90 - 0.99. Smoke test confirmed an exact repeat hits at sim=0.9999 (17.1s -> 0.2s, ~85x latency win) but a paraphrase ("Who slayed Smaug the dragon?" vs "Who killed Smaug?") missed at 0.97. Without the paraphrase eval the threshold is honest noise.
 - **CI eval triggers.** The GitHub Actions workflow is wired but `workflow_dispatch:` only. Header comment marks it manual-until-budget-policy-exists.
-- **RAGAS rerun on the expanded corpus — agent row.** The dense and turbovec rows have been re-measured on the 2,296-article corpus (see "Expanded corpus re-eval" above), confirming that the expansion materially lowers context_precision and context_recall while lifting faithfulness and answer_relevancy. The agent row (faith 0.918 / rel 0.812 / prec 0.889 / recall 0.881) is still on the original 682-article corpus; re-running it would settle whether the agent's recall-composition wins survive the noisier candidate pool.
+- **Battle of Five Armies probe failure on the expanded corpus.** Both dense and agent score 0.0 on every context metric for this probe on the 2,296-article corpus. Worth investigating: is it a chunking artefact, a Tolkien Gateway article that dilutes the candidate set, or an evaluator issue? Fix would lift the agent's answer_relevancy from 0.706 back toward the ~0.82 it scores on the other six probes.
 - **Mithril and other Materials.** The TG scrape excluded `Category:Materials` (didn't appear in seed-page discovery). Mithril is still covered by the existing Wikipedia article, but TG's potentially richer version isn't in the corpus. A small follow-up scrape adding a few more categories would close this; the per-title dedup in `fetch.py` would skip everything already saved.
 - **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.
 
