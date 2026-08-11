@@ -1,6 +1,6 @@
 """Conversation memory store: SQLite, session-scoped, append-only with TTL eviction.
 
-Day-14 multi-turn support. Each conversation is a session_id; turns are stored
+Multi-turn support. Each conversation is a session_id; turns are stored
 append-only with a per-session monotonic turn_index. Reads use a sliding window
 (last N turns) for the synthesize prompt + coref rewriter. Old data ages out
 via prune_expired() as a maintenance task (no implicit deletion on writes).

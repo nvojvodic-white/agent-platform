@@ -137,7 +137,7 @@ async def agent_query_stream(req: QueryRequest) -> StreamingResponse:
     browser EventSource / fetch+ReadableStream client.
 
     NOTE: the non-streaming /agent_query is preserved byte-identical so RAGAS,
-    the Day-11 agent probes, and any A/B caller continue to work.
+    the agent probes, and any A/B caller continue to work.
     """
     streaming_agent = get_streaming_agent()
 

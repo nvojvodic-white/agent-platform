@@ -29,7 +29,7 @@ def run_in_corpus(probes: list[dict]) -> None:
         print(f"Q: {probe['query']}")
         print(f"Expected top titles: {probe['expected_top_source_titles']}")
         print(
-            f"Day 2: {probe['verdict']} / {probe['failure_mode']}"
+            f"Retrieval verdict: {probe['verdict']} / {probe['failure_mode']}"
         )
         data = _hit(probe["query"])
         if data is None:
@@ -38,7 +38,10 @@ def run_in_corpus(probes: list[dict]) -> None:
         print(f"Retrieved {data['retrieved_chunks']} chunks:")
         for i, s in enumerate(data["sources"], 1):
             print(f"  [{i}] {s['source']} :: {s['title']}")
-        print(f"\nDay 3 finding: {probe.get('day_3_finding', '(none recorded)')}")
+        print(
+            f"\nSynthesis finding: "
+            f"{probe.get('synthesis_finding', '(none recorded)')}"
+        )
 
 
 def run_out_of_corpus(probes: list[dict]) -> None:

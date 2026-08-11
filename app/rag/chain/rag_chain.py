@@ -27,7 +27,7 @@ def format_docs_for_prompt(docs: list[Document]) -> str:
 def build_chain(k: int = 4, retriever_kind: str = "dense") -> Runnable:
     """Build the RAG LCEL chain. Cached per (k, retriever_kind).
 
-    retriever_kind in {dense, sparse, hybrid}. Default is dense: the Day 6
+    retriever_kind in {dense, sparse, hybrid}. Default is dense: the
     retriever comparison found dense best on this corpus (hybrid regressed
     Smaug + Dwarf-rings, and no retriever could fix Bombadil since the corpus
     lacks that article). hybrid/sparse remain available for A/B.

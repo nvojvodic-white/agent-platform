@@ -19,7 +19,7 @@ load_dotenv()
 RAW_DIR = Path("data/raw")
 CHROMA_DIR = "data/chroma_middle_earth"
 COLLECTION = "middle_earth"
-# Account is on the 1M TPM tier (Day 9 probe). Our throughput (~15k tokens/batch)
+# Account is on the 1M TPM tier (measured). Our throughput (~15k tokens/batch)
 # is far under that, so a small safety sleep is plenty. Matches build_pdr_index.
 EMBED_BATCH = 100
 BATCH_SLEEP_SEC = 1
@@ -48,8 +48,7 @@ def main() -> None:
 
     # 800/120 balances definitional coherence (entity definitions cluster in
     # 200-400 char spans) against event-narrative continuity (paragraphs run
-    # ~600-1000 chars). To be A/B tested against parent-document retrieval on
-    # day 9.
+    # ~600-1000 chars). To be A/B tested against parent-document retrieval.
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
         chunk_overlap=120,

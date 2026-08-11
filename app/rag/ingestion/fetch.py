@@ -95,8 +95,8 @@ SOURCES = [
         ],
     ),
     Source(
-        # Day-16 add. Tolkien Gateway is the canonical fan wiki and was the
-        # original Day-2 primary source, blocked by HTTP 403 on every request
+        # Later add. Tolkien Gateway is the canonical fan wiki and was the
+        # original primary source, blocked by HTTP 403 on every request
         # at the time. The block has since lifted; the API works fine now.
         # Categories below come from a seed-page discovery pass (see commit
         # message); maintenance categories like "Pages with short description"
@@ -131,7 +131,7 @@ SOURCES = [
             "Category:Dúnedain",
             "Category:House of Isildur",
             "Category:House of Bëor",
-            # Conflicts (the categories Day 2 totally missed on Fandom too)
+            # Conflicts (the categories the initial pass missed on Fandom too)
             "Category:Conflicts of the War of the Ring",
             "Category:Sieges",
             # Artifacts (canonical-wiki advantage: Silmarils, Andúril, etc.)

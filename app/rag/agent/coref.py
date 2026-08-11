@@ -1,7 +1,7 @@
 """Coreference resolution: rewrite a follow-up question to be self-contained,
 using prior conversation turns.
 
-Day-14 multi-turn support. Without this, every retrieval on a follow-up like
+Multi-turn support. Without this, every retrieval on a follow-up like
 "Who killed him?" runs with no entity and silently degrades. With it,
 classification + retrieval + grading all see "Who killed Smaug?" instead.
 

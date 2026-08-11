@@ -13,16 +13,16 @@ Fill in at the end of the build from the latest `ragas_history/*.json` records.
 
 ## Headline retrievers
 
-| retriever | faithfulness | answer_relevancy | context_precision | context_recall | n_runs | day | notes |
-|---|---|---|---|---|---|---|---|
-| dense (baseline) | _ | _ | _ | _ | _ | 7 | recursive 800/120, fixed default |
-| sparse | _ | _ | _ | _ | _ | 7 | BM25 with custom preprocessor |
-| hybrid (50/50) | _ | _ | _ | _ | _ | 8 | deferred from Day 7, kind=hybrid |
-| hybrid_40_60 | _ | _ | _ | _ | _ | 8 | deferred from Day 7 |
-| hyde | _ | _ | _ | _ | _ | 8 | hypothetical-answer embedding |
-| multi_query | _ | _ | _ | _ | _ | 8 | re-ranked union, k=4 truncated |
-| pdr | _ | _ | _ | _ | _ | 9 | 400-char children, 2000-char parents |
-| semantic | _ | _ | _ | _ | _ | 9 | SemanticChunker topic boundaries |
+| retriever | faithfulness | answer_relevancy | context_precision | context_recall | n_runs | notes |
+|---|---|---|---|---|---|---|
+| dense (baseline) | _ | _ | _ | _ | _ | recursive 800/120, fixed default |
+| sparse | _ | _ | _ | _ | _ | BM25 with custom preprocessor |
+| hybrid (50/50) | _ | _ | _ | _ | _ | deferred, kind=hybrid |
+| hybrid_40_60 | _ | _ | _ | _ | _ | deferred |
+| hyde | _ | _ | _ | _ | _ | hypothetical-answer embedding |
+| multi_query | _ | _ | _ | _ | _ | re-ranked union, k=4 truncated |
+| pdr | _ | _ | _ | _ | _ | 400-char children, 2000-char parents |
+| semantic | _ | _ | _ | _ | _ | SemanticChunker topic boundaries |
 
 ## Per-probe diagnostic table (dense baseline)
 
@@ -36,7 +36,7 @@ The probes that drive variance across retrievers. Fill from the dense history re
 | Battle of Five Armies | _ | _ | _ | _ |
 | Beren and Lúthien | _ | _ | _ | corpus-coverage limit (no Beren article) |
 | What is mithril? | _ | _ | _ | low recall on dense → fixed by semantic |
-| Tom Bombadil | _ | _ | _ | low recall on dense → fixed by semantic; corpus gap closed Day 6.5 |
+| Tom Bombadil | _ | _ | _ | low recall on dense → fixed by semantic; corpus gap closed by the Bombadil fix |
 
 ## Headline decisions
 

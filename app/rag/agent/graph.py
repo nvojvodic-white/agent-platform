@@ -1,8 +1,8 @@
 """Routing RAG agent built with LangGraph.
 
-Tests the thesis question Day 11 sets up: can measured query-conditional
-routing beat the best single retriever? The routing table is grounded in Day
-7-9 evidence:
+Tests the thesis question: can measured query-conditional routing beat the
+best single retriever? The routing table is grounded in the retriever and
+RAGAS comparison evidence:
   definitional -> semantic  (lifts recall on Mithril/Bombadil)
   multi_hop    -> hyde      (precision lift on Smaug-class queries)
   general      -> dense     (the strong baseline)
@@ -60,15 +60,15 @@ Grade = Literal["relevant", "partial", "poor"]
 
 class AgentState(TypedDict, total=False):
     question: str
-    # Day 14: post-coreference rewrite of `question` for multi-turn. Set by
+    # Post-coreference rewrite of `question` for multi-turn. Set by
     # resolve_query in graph_streaming. Downstream nodes read
     # state.get("resolved_question") or state["question"], so paths without
     # memory keep working byte-identically.
     resolved_question: str
-    # Day 14: optional list of {"role": "user"|"assistant", "content": str}
+    # Optional list of {"role": "user"|"assistant", "content": str}
     # carried into synthesis as conversation context.
     history: list[dict]
-    # Day 14: opaque caller-provided session id. Only used to scope memory
+    # Opaque caller-provided session id. Only used to scope memory
     # reads/writes in the endpoint; the graph itself does not read it.
     session_id: str | None
     route: Route

@@ -1,7 +1,7 @@
 """Semantic response cache: embed the incoming question, return a cached
 response if any prior question is within `threshold` cosine similarity.
 
-Day-12 rejected this for the demo workload (exact-string LRU catches every
+Rejected for the demo workload (exact-string LRU catches every
 repeat; semantic caching adds silent-wrong-answer risk and staleness on prompt
 / retriever / corpus changes). This implementation is the 'minimal, opt-in,
 documented' version: disabled by default, behind SEMANTIC_CACHE_ENABLED=1,

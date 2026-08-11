@@ -1,4 +1,4 @@
-"""Build a semantic-chunking index (Day 2's deferred chunking variant).
+"""Build a semantic-chunking index (the deferred chunking variant).
 
 Instead of fixed 800-char windows, SemanticChunker splits where the embedding
 distance between consecutive sentences spikes - i.e. at topic boundaries. The

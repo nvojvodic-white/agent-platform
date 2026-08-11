@@ -1,9 +1,8 @@
 # Deployment
 
-The deploy decision for this project, written out rather than executed. This
-doc is the honest version of the "Path B" close-out: the system can run
-on EKS, the work to get it there is bounded and known, and that work is not
-where the portfolio value of the RAG project sits (it sits in
+The deploy decision for this project, written out rather than executed: the
+system can run on EKS, the work to get it there is bounded and known, and that
+work is not where the portfolio value of the RAG project sits (it sits in
 [`app/rag/eval/findings.md`](app/rag/eval/findings.md) and the measured
 routing decisions). The companion repo `dev-platform` is where the
 EKS/Karpenter/Argo CD work lives.
@@ -89,8 +88,8 @@ pattern; otherwise plain `kubectl create secret generic` is fine for a demo.
 
 The current Helm chart (`charts/agent-platform/`) ships a `secret.yaml`
 template wired to `ANTHROPIC_API_KEY` and `PLATFORM_API_KEY` only. Adding
-`OPENAI_API_KEY` is a one-line template change plus a `values.yaml` entry. A
-real Path-A execution would do that change first.
+`OPENAI_API_KEY` is a one-line template change plus a `values.yaml` entry.
+Actually shipping to EKS would do that change first.
 
 ### 4. Ingress
 
@@ -124,14 +123,14 @@ only manifest with a public hostname.
 
 Note: the chart currently in `charts/agent-platform/` ships templates for the
 agent service (the pre-RAG portfolio shape). Splitting it into
-agent + rag + frontend per the structure above is the real Path-A work item.
+agent + rag + frontend per the structure above is the real work item.
 
-## What's true today vs what's needed for Path A
+## What's true today vs what's needed to ship on EKS
 
 | piece | state today | gap to ship on EKS |
 |---|---|---|
 | RAG application code | done | none |
-| Dockerfile builds the RAG service | yes, same `app.main:app` entrypoint hosts both `/api/v1/sessions` and `/api/v1/rag/*` | the current single-image approach co-locates the agent and RAG; splitting into two images is the cleaner Path-A move |
+| Dockerfile builds the RAG service | yes, same `app.main:app` entrypoint hosts both `/api/v1/sessions` and `/api/v1/rag/*` | the current single-image approach co-locates the agent and RAG; splitting into two images is the cleaner move |
 | Helm chart | exists for the agent (`charts/agent-platform/`) | split into agent / rag / frontend subcharts per the shape above |
 | `OPENAI_API_KEY` in secret + env | not in the chart | one-line template + values.yaml addition |
 | `RAG_SERVICE_URL` env on agent | wired in code (`app/tools/rag_search.py`) | one env block on the agent deployment |
@@ -151,7 +150,7 @@ The application is done. The deploy work is bounded:
   CD pipeline, RAG observability wired, blue-green or canary rollout. Most of
   that work would duplicate skills already demonstrated in `dev-platform`.
 
-Path B (this document) is the close-out for the RAG project specifically: the
+This document is the close-out for the RAG project specifically: the
 portfolio value of the measured-iteration arc lives in
 [`findings.md`](app/rag/eval/findings.md), the [README](README.md), the
 [scorecard template](app/rag/eval/scorecard.md), and the

@@ -32,7 +32,7 @@ eval-compare:
 rag-rebuild:
 	docker compose up -d --build agent-api
 
-# Run the day-2/day-3 probe sweep against the live service. Override RAG_URL
+# Run the probe sweep against the live service. Override RAG_URL
 # to point at a different port (e.g. RAG_URL=http://localhost:8124/... make rag-probes).
 rag-probes:
 	. venv/bin/activate && python -m app.rag.eval.run_probes

@@ -8,10 +8,10 @@ instances that take the judge LLM at evaluate() time.
 Judge = Claude (conservative on faithfulness); embeddings = OpenAI (for
 answer-relevancy's question-regeneration similarity).
 
-Day 10: --n-runs aggregation. The judge is non-deterministic, so faithfulness
+--n-runs aggregation. The judge is non-deterministic, so faithfulness
 and answer_relevancy drift ~0.04 between runs. Running n times and reporting
 mean + stdev makes deltas attributable. Writes the per-run-averaged scores to
-the CSV (compatible with Day 7-9 files) AND a richer JSON history record
+the CSV (compatible with the earlier files) AND a richer JSON history record
 (per-run scores, mean, std, timestamp, retriever, k, git_sha) for
 compare_to_baseline.py.
 
@@ -172,7 +172,7 @@ def main(retriever_kind: str, k: int, n_runs: int, agent: bool = False) -> None:
     mean_per_probe = {c: stacks[c].mean(axis=0) for c in metric_cols}
     std_per_probe = {c: stacks[c].std(axis=0, ddof=0) for c in metric_cols}
 
-    # CSV: per-probe mean scores across runs (compatible with Day 7-9 schema).
+    # CSV: per-probe mean scores across runs (compatible with the earlier schema).
     base = per_run_dfs[0].copy()
     for c in metric_cols:
         base[c] = mean_per_probe[c]

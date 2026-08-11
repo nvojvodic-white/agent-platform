@@ -1,8 +1,9 @@
 """Sweep all 7 in-corpus probes against the LangGraph routing agent.
 
-Measures classifier accuracy (vs the Day 11 expected routes from the plan) and
+Measures classifier accuracy (vs the expected routes from the plan) and
 captures grade + retry behavior per probe. The expected routes are a HYPOTHESIS
-from the Day 8-9 evidence, not ground truth - the plan flags this explicitly.
+from the retriever comparison evidence, not ground truth - the plan flags this
+explicitly.
 A classifier that disagrees with the expectation but still produces a correct
 answer is itself a finding (suggests the routing distinction matters less than
 predicted on that probe).
@@ -20,7 +21,7 @@ URL = os.getenv(
 )
 PROBES_PATH = Path(__file__).parent / "probe_queries.json"
 
-# Day 11 plan's hypothesis of correct routes, from Day 8-9 evidence.
+# The plan's hypothesis of correct routes, from the retriever comparison.
 EXPECTED_ROUTES = {
     "Who is Gandalf?": "definitional",
     "Who killed Smaug?": "multi_hop",

@@ -4,7 +4,7 @@ Chroma holds the embedded chunks; BM25 needs the same chunks as plain Document
 objects. Rather than re-chunk and re-embed (which costs OpenAI calls), pull the
 stored documents + metadata back out of Chroma via .get() and reconstitute
 Documents. The pickle is the shared chunk source for the sparse retriever
-(Day 6) and parent-document retrieval (Day 9).
+and parent-document retrieval.
 """
 import pickle
 from pathlib import Path

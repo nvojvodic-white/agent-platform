@@ -1,8 +1,8 @@
 """Streaming-path variant of the routing agent.
 
-Day 13 streaming addendum to graph.py. Per the plan:
+Streaming addendum to graph.py:
   - Keep the non-streaming graph (graph.build_agent) untouched so RAGAS, the
-    Day-11 agent_v2 probes, the /agent_query route, and /agent_query_debug all
+    agent_v2 probes, the /agent_query route, and /agent_query_debug all
     keep working byte-identical.
   - Build a parallel async graph that runs classify -> retrieve -> grade ->
     [rewrite -> retrieve] and exits when retrieval is finalised. Synthesis is
@@ -230,7 +230,7 @@ def get_streaming_agent():
     return _streaming_agent
 
 
-# --- multi-turn variant (Day 14) --------------------------------------------
+# --- multi-turn variant -----------------------------------------------------
 
 
 async def aresolve_query(state: AgentState) -> dict:

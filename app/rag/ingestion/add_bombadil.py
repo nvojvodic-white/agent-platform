@@ -1,6 +1,6 @@
-"""Day 6.5: targeted fetch of the Wikipedia 'Tom Bombadil' article + index delta.
+"""Targeted fetch of the Wikipedia 'Tom Bombadil' article + index delta.
 
-Day 6 found the Bombadil retrieval miss was a corpus gap, not a dense-vs-sparse
+The retriever comparison found the Bombadil miss was a corpus gap, not a dense-vs-sparse
 problem: the corpus had no standalone Bombadil article (only the poetry
 collection 'The Adventures of Tom Bombadil'). This closes that gap.
 
@@ -8,7 +8,7 @@ Fetches the article via the existing extracts path, saves it under
 data/raw/wikipedia/, then adds ONLY its chunks to the existing Chroma collection
 and appends them to the chunks pickle (no full re-embed of the 5763 existing
 chunks). Re-run app.rag.eval.compare_retrievers afterwards to retest the
-original Day 6 hypothesis on a fair corpus.
+original hypothesis on a fair corpus.
 """
 import json
 import pickle

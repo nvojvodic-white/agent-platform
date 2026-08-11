@@ -1,11 +1,11 @@
 # RAG findings
 
-## Day 17: Tolkien Gateway corpus expansion (3.4x articles, 2.6x chunks)
+## Tolkien Gateway corpus expansion (3.4x articles, 2.6x chunks)
 
 A friend pointed out Tolkien Gateway runs MediaWiki, so the API should be
-reachable. The Day-2 block (HTTP 403 on every TG request from this network)
+reachable. The earlier block (HTTP 403 on every TG request from this network)
 has lifted in the intervening weeks: a simple curl probe returned 200 with
-a valid JSON category response. We re-attempted the original Day-2 plan and
+a valid JSON category response. We re-attempted the original scrape plan and
 scraped TG into the corpus.
 
 **Category discovery was the load-bearing methodology change.** Naive guesses
@@ -51,12 +51,12 @@ re-ingest than after the fact.
 
 | probe | top-4 sources | gap closure |
 |---|---|---|
-| Tom Bombadil | wikipedia x 1 + tolkien_gateway x 3 (all titled "Tom Bombadil") | TG's 16.8 KB article corroborates the Day 6.5 WP fix |
-| Who killed Smaug? | tolkien_gateway:Bilbo + wikipedia:Dragons + fandom:Thorin + tolkien_gateway:Battle of Five Armies | TG Battle article cleaner than Day 3 Fandom (no maintenance template noise) |
-| Beren and Luthien | **tolkien_gateway:Beren x 2** + tolkien_gateway:Lúthien + fandom:Lúthien | **Day 3's 'no standalone Beren article' gap closed.** Beren now appears at ranks 1 AND 2. |
+| Tom Bombadil | wikipedia x 1 + tolkien_gateway x 3 (all titled "Tom Bombadil") | TG's 16.8 KB article corroborates the Wikipedia Bombadil fix |
+| Who killed Smaug? | tolkien_gateway:Bilbo + wikipedia:Dragons + fandom:Thorin + tolkien_gateway:Battle of Five Armies | TG Battle article cleaner than the Fandom one (no maintenance template noise) |
+| Beren and Luthien | **tolkien_gateway:Beren x 2** + tolkien_gateway:Lúthien + fandom:Lúthien | **The 'no standalone Beren article' gap closed.** Beren now appears at ranks 1 AND 2. |
 | What is mithril? | wikipedia:Mithril x 4 | control: TG missed via Category:Materials exclusion, WP still covers it. No regression. |
 
-The Beren result is the most concrete gap closure: Day 3 explicitly noted
+The Beren result is the most concrete gap closure: the synthesis pass noted
 "the corpus has a 'Lúthien' article but no standalone 'Beren' one" and
 reclassified the Beren probe as a corpus-coverage limit. That limit is now
 gone; a standalone Beren article exists and ranks first on the probe.
@@ -64,7 +64,7 @@ gone; a standalone Beren article exists and ranks first on the probe.
 **One real miss worth being honest about:** Mithril was in TG's
 `Category:Materials` which I excluded from the scrape (didn't appear in
 seed-page discovery; I didn't use Mithril as a seed). The Wikipedia article
-from Day 2 still covers Mithril, so the topic isn't lost, but TG's
+from the original scrape still covers Mithril, so the topic isn't lost, but TG's
 potentially richer Mithril article isn't in the corpus. Same probably true
 for other concepts in categories my discovery pass missed. Acceptable
 tradeoff for this batch; a future iteration could add `Category:Materials`
@@ -75,24 +75,24 @@ fetch.py would skip everything already saved).
 the corpus, but it didn't make the top-4 for "Who killed Smaug?" under dense
 retrieval. The question phrasing doesn't have strong semantic proximity to
 Bard's own article text. The routing agent's `multi_hop -> hyde` path
-(Day 8) would generate a hypothetical answer mentioning "Bard the Bowman"
+would generate a hypothetical answer mentioning "Bard the Bowman"
 and likely surface the article. Not blocking; worth re-checking when next
 the agent endpoint gets exercised.
 
 **Skipped (deliberate, per request):** re-running RAGAS over the expanded
-corpus. The agent measurement from Day 16 (faith 0.918 / rel 0.812 / prec
+corpus. The routing-agent measurement (faith 0.918 / rel 0.812 / prec
 0.889 / recall 0.881) was on the 682-article corpus; the larger 2,296-
-article corpus would almost certainly shift those numbers. The Day-16 row
+article corpus would almost certainly shift those numbers. The agent row
 in the README headline table is now stale relative to the underlying corpus.
 A future re-eval would settle whether the corpus expansion lifts recall
 further or hurts precision (more candidates = more on-topic noise to filter).
 Cost would be ~$5-10 in Claude judge calls; deferred for now.
 
-## Day 16: RAGAS over the routing agent (the deferred row, filled)
+## RAGAS over the routing agent (the deferred row, filled)
 
 Ran `ragas_eval.py --agent` (new flag, in-process `get_agent()` path,
 n_runs=1 to match the other rows). 7 probes, ~50 Claude calls total. This
-closes the Day-11 deferral that has been the visible gap in the README
+closes the deferral that has been the visible gap in the README
 headline table since the routing agent shipped.
 
 | retriever | faithfulness | answer_relevancy | ctx_precision | ctx_recall |
@@ -109,7 +109,7 @@ headline table since the routing agent shipped.
 The agent gets there by composing per-probe routing decisions: Mithril and
 Bombadil hit 1.0 recall (semantic's strength), Smaug and Battle of Five
 Armies hit 1.0 (dense's strength), all in a single eval. This is the
-thesis-question answer from Day 11 ("can measured routing beat the best
+thesis question ("can measured routing beat the best
 single retriever?") finally measured rather than asserted: yes on recall,
 which was the metric the project's whole arc was bottlenecked on.
 
@@ -118,12 +118,12 @@ which was the metric the project's whole arc was bottlenecked on.
 | probe | faith | rel | prec | recall | observation |
 |---|---|---|---|---|---|
 | Gandalf | 0.875 | 0.848 | 0.806 | 0.750 | Routed semantic; semantic's recall ceiling on this probe matters here |
-| Smaug | 1.000 | 0.838 | 1.000 | 1.000 | Routed hyde; perfect across the board (the Day-8 hyde win, automated) |
+| Smaug | 1.000 | 0.838 | 1.000 | 1.000 | Routed hyde; perfect across the board (the hyde precision win, automated) |
 | Dwarves rings | 0.812 | 0.777 | 0.917 | 0.667 | Routed hyde; precision win held, recall same as semantic |
-| Battle of Five Armies | 0.808 | 0.802 | 1.000 | 1.000 | Routed dense; the synthesis-recovered case from Day 3 still works |
+| Battle of Five Armies | 0.808 | 0.802 | 1.000 | 1.000 | Routed dense; the synthesis-recovered case still works |
 | Beren / Luthien | 0.971 | 0.792 | 1.000 | 0.750 | Routed semantic; the corpus-coverage limit (no standalone Beren article) caps recall |
 | Mithril | 1.000 | 0.840 | 0.500 | 1.000 | Routed semantic; recall fixed (was 0.33 on dense), precision drops as expected |
-| Bombadil | 0.963 | 0.785 | 1.000 | 1.000 | Routed semantic; the Day 6.5 corpus fix + semantic routing both pay off here |
+| Bombadil | 0.963 | 0.785 | 1.000 | 1.000 | Routed semantic; the Bombadil corpus fix + semantic routing both pay off here |
 
 **Cost of the recall win: faithfulness (0.918 vs semantic's 0.988).** The
 agent's `grade -> [rewrite -> retrieve]` loop occasionally retries; when it
@@ -131,7 +131,7 @@ does, the rewrite-driven second retrieval injects mildly noisier context and
 the synthesiser makes more claims the judge cannot fully entail. This is
 also the per-probe-routing tax: when you compose three retrievers'
 strengths, you also compose three retrievers' weaknesses, and the synthesis
-layer absorbs that as small faithfulness slips. The Day-12 latency budget
+layer absorbs that as small faithfulness slips. The latency budget
 (~14s end-to-end cold) already flagged the agent's speed cost; today's
 measurement adds the quality side of the same tradeoff.
 
@@ -150,7 +150,7 @@ keeps the eval surface uniform. The streaming agent (`/agent_query_stream_v2`)
 shares the same nodes minus synthesis-as-graph-node, so its RAGAS would be
 identical to this row; measuring it separately would just burn judge calls.
 
-## Day 12 (Hour 1) — Latency stack + targeted retrieval cache
+## Latency stack + targeted retrieval cache
 
 Added `@timed` decorators to every LangGraph node and an `lru_cache(maxsize=256)`
 on retrieval, keyed by `(question, route, k)`. Ran the 7-probe sweep twice via
@@ -200,11 +200,11 @@ that swamps small wins.
   LRU catches every meaningful hit and avoids the silent-wrong-answer failure
   mode of fuzzy-match caches.
 
-## Day 11 — LangGraph routing agent
+## LangGraph routing agent
 
 Built a LangGraph state machine in `app/rag/agent/graph.py` that classifies each
 question into `definitional` / `multi_hop` / `general` and routes to the
-retriever each class wins on per Days 7-9 (semantic / hyde / dense). The graph
+retriever each class wins on per the RAGAS comparisons (semantic / hyde / dense). The graph
 also grades retrieved docs and can rewrite + retry once on a `poor` grade.
 Exposed as `/api/v1/rag/agent_query` (production) and `/api/v1/rag/agent_query_debug`
 (returns route, grade, attempt, trace). RAGAS deferred to end-of-project to save
@@ -229,7 +229,7 @@ the grader is at least lukewarm. That's a deliberate tradeoff; a more aggressive
 retry policy could lift quality at meaningful cost.
 
 **Beren & Lúthien is the only "miss" — and the plan's expectation is the part
-that's wrong.** My Hour 1 pre-registered prediction was `definitional` for that
+that's wrong.** My pre-registered prediction was `definitional` for that
 probe (a request to identify two specific entities), which is what the
 classifier chose. The plan's table had `general`. The classifier's reasoning
 ("requesting concise information about who they are") is sound, and semantic
@@ -240,13 +240,13 @@ expected-routes table is a hypothesis, not ground truth.
 **Two qualitative wins from per-query routing that the prior single-retriever
 runs left on the table:**
 - *Smaug → multi_hop → hyde*: hyde surfaced `Destruction of Lake-town` at rank 1
-  (the Day 8 hyde-only precision win), and the grader returned `relevant` first
+  (the hyde-only precision win), and the grader returned `relevant` first
   try. Dense never reached that chunk; the agent picked the right tool
   automatically.
-- *Dwarves → multi_hop → hyde*: on Day 6 hyde+sparse hybrids regressed this
-  probe via BM25 noise (Ori / Farmer Maggot); standalone hyde on Day 8 was
+- *Dwarves → multi_hop → hyde*: the hyde+sparse hybrids regressed this
+  probe via BM25 noise (Ori / Farmer Maggot); standalone hyde was
   fine; the agent now selectively *uses* hyde here. This is the per-query
-  routing extracting Day 8 wins without paying Day 6's hybrid-tail precision
+  routing extracting the hyde wins without paying the hybrid-tail precision
   cost.
 
 **Three `partial` grades worth noting** (Gandalf, Battle, Bombadil): all three
@@ -263,15 +263,15 @@ might still improve, paid in extra LLM calls.
 The grader is honest and inspectable. End-to-end RAGAS quality vs single
 retrievers is deferred to end-of-project to manage cost.
 
-## Day 9 — Chunk-granularity: parent-document retrieval & semantic chunking
+## Chunk-granularity: parent-document retrieval & semantic chunking
 
 Tested whether changing what "a chunk" is can move the ~0.82 recall ceiling that
-Day 8's query transforms could not. Two chunk-axis interventions, both in separate
+the query transforms could not. Two chunk-axis interventions, both in separate
 Chroma collections (production `middle_earth` untouched):
 - **PDR** (`build_pdr_index.py`, `pdr.py`): 400-char children for embedding, 2000-char
   parents for context (2340 parents / 12378 children, no article truncated). Retrieve
   children, dedupe by parent_id, return top-k parents.
-- **Semantic** (`build_semantic_index.py`, `semantic.py`): the Day-2 deferred variant.
+- **Semantic** (`build_semantic_index.py`, `semantic.py`): the originally deferred variant.
   SemanticChunker splits at embedding-distance topic boundaries (2268 chunks, avg 1464
   chars vs the recursive baseline's 800).
 
@@ -284,7 +284,7 @@ Four-way RAGAS (mean over 7 probes, k=4; judge = Claude):
 | semantic | **0.988** | 0.842 | 0.758 | **0.833** |
 
 **Answer to the substrate-ceiling question: granularity moves recall, but only a little,
-and not for free.** Semantic chunking is the only intervention all week to lift recall
+and not for free.** Semantic chunking is the only intervention to lift recall
 above dense (0.821 → 0.833) — and it specifically *fixed the two worst dense recall
 probes*: Mithril 0.33 → 1.0 and Bombadil 0.67 → 1.0. So the recall gaps on those probes
 were genuinely granularity-bound: the recursive 800-char splitter was cutting their facts
@@ -311,7 +311,7 @@ claims. Monotonic with chunk size across all three — a clean secondary signal.
 **Decision:** dense stays the default. Neither intervention is a clear win: PDR loses on
 recall, semantic trades precision for a small recall gain. But semantic's targeted fix of
 the Mithril/Bombadil recall gaps is worth keeping available (`kind="semantic"`) and points
-at a possible Day 11+ refinement — a *hybrid of granularities* (semantic chunks for
+at a possible future refinement — a *hybrid of granularities* (semantic chunks for
 recall-hard entity probes, recursive for precision-sensitive event probes) rather than one
 global chunk size.
 
@@ -322,22 +322,22 @@ global chunk size.
 never instantiates ChatVertexAI under our Claude judge, so the stub is inert. requirements
 bumped: langchain-community 0.4.1→0.4.2, langchain-classic 1.0.0→1.0.7, +langchain-experimental 0.4.2.
 
-## Day 8 — Query transformation: HyDE and Multi-Query
+## Query transformation: HyDE and Multi-Query
 
-Built two query-transformation retrievers and measured both with the Day 7 RAGAS harness:
+Built two query-transformation retrievers and measured both with the RAGAS harness:
 - `app/rag/retrieval/hyde.py` — generate a hypothetical answer, embed it, retrieve on it.
 - `app/rag/retrieval/multi_query.py` — generate ~3 phrasings, retrieve each, dedupe,
   re-rank the union by similarity to the original query, keep top-k.
 
 Both wired into `get_retriever(kind=hyde|multi_query)`. LLM calls (judge + both
-transforms) hardened with `max_retries=5` after Day 7's transient-500 trouble.
+transforms) hardened with `max_retries=5` after the earlier transient-500 trouble.
 
 Five-way table (mean over 7 in-corpus probes, k=4):
 
 | retriever | faithfulness | answer_relevancy | context_precision | context_recall |
 |---|---|---|---|---|
-| dense (Day 7 baseline) | 0.913 | 0.803 | 0.881 | 0.821 |
-| dense (Day 8 rerun)    | 0.949 | 0.801 | 0.881 | 0.821 |
+| dense (baseline) | 0.913 | 0.803 | 0.881 | 0.821 |
+| dense (rerun)    | 0.949 | 0.801 | 0.881 | 0.821 |
 | sparse                 | 0.832 | 0.691 | 0.440 | 0.179 |
 | hyde                   | 0.928 | 0.812 | **0.937** | 0.821 |
 | multi_query            | 0.900 | 0.809 | 0.881 | 0.821 |
@@ -382,10 +382,10 @@ The 0.41 number was measuring the bug, not multi-query — re-ran fairly to get 
 trustworthy metric (precision +0.056) and is retained as an opt-in `kind`. Recall sits at
 ~0.82 across dense/hyde/multi_query and was not lifted by any query transform — evidence
 that the recall ceiling on this corpus is set by chunking/corpus coverage, not query
-phrasing. That points at parent-document / chunk-level work (Day 9) as the next lever for
+phrasing. That points at parent-document / chunk-level work as the next lever for
 the Mithril/Bombadil recall gaps, not more query engineering.
 
-## Day 7 — RAGAS automated eval (replaces Day 6 hand-scoring)
+## RAGAS automated eval (replaces hand-scoring)
 
 Built `app/rag/eval/ragas_eval.py` (ragas 0.4.0; the plan's 0.2.6 pin conflicts with
 our langchain 1.x stack, so the harness uses the 0.4.0 `EvaluationDataset` /
@@ -403,15 +403,15 @@ Mean scores (7 probes, k=4):
 | hybrid 50/50  | (deferred) | | | |
 | hybrid 40/60  | (deferred) | | | |
 
-**Quantified the Day 6 verdict:** dense beats sparse on every metric, decisively on the
+**Quantified the hand-scored verdict:** dense beats sparse on every metric, decisively on the
 two retrieval metrics — context_precision 0.88 vs 0.44, context_recall 0.82 vs 0.18.
-Sparse's BM25 literalism (the Ori / Farmer Maggot noise seen by hand on Day 6) shows up
+Sparse's BM25 literalism (the Ori / Farmer Maggot noise seen by hand) shows up
 as a precision/recall collapse; "What rings did the Dwarves get?" even scored
 answer_relevancy 0.0 under sparse because the retrieved chunks were too off-topic to
-support a relevant answer. This is the hand-scored Day 6 finding, now with numbers.
+support a relevant answer. This is the hand-scored finding, now with numbers.
 
 **Faithfulness is high but not uniform.** Dense 0.91 — the strong prompt does most of the
-grounding work, a partial answer to the deferred Day 5 question. But it is not a flat
+grounding work, a partial answer to the deferred prompt-vs-retrieval question. But it is not a flat
 1.0: the "Battle of Five Armies" probe scored 0.61 faithfulness under dense (the answer
 made battle-detail claims the retrieved chunks only partly support). So retrieval quality
 *does* interact with groundedness — subtler than the clean two-layer model.
@@ -420,9 +420,9 @@ made battle-detail claims the retrieved chunks only partly support). So retrieva
 - Mithril: context_recall 0.33 under dense. The answer is faithful, but the retrieved WP
   Mithril chunks lean definitional (etymology/properties) and miss the Moria / Bilbo's-mail
   facts in the ground truth. A recall gap on an otherwise "clean" probe.
-- Tom Bombadil (post Day-6.5 fix): recall 0.67, precision 0.92 under dense. The new
+- Tom Bombadil (post corpus fix): recall 0.67, precision 0.92 under dense. The new
   Wikipedia article supports most but not all canonical facts — the article isn't
-  maximally dense, exactly the test Day 6.5 set up.
+  maximally dense, exactly the test the corpus fix set up.
 
 **Method caveats worth keeping:** (1) RAGAS judge scores are non-deterministic —
 faithfulness on the same dense run moved 0.938 → 0.913 across two runs, so treat sub-0.05
@@ -430,13 +430,13 @@ differences as noise. (2) The judge initially truncated (NaN) at max_tokens 2048
 Battle probe's claim decomposition; raised to 4096. (3) The hybrid 50/50 and 40/60 rows
 are DEFERRED: Anthropic was returning intermittent 500s (~1 in 3 calls) during this
 session, which killed both hybrid runs mid-evaluation. dense + sparse completed cleanly
-before the instability. Hybrid rows to be filled in when the API stabilizes; Day 6's
+before the instability. Hybrid rows to be filled in when the API stabilizes; the
 hand-scored hybrid evidence (neutral-to-slightly-worse than dense) stands in the interim.
 
 **Net:** dense remains the default, now with a measured baseline that can be re-run in
 ~2 min per retriever whenever anything downstream changes.
 
-## Day 6 — Hybrid retrieval (BM25 + dense)
+## Hybrid retrieval (BM25 + dense)
 
 Built a swappable retriever (`get_retriever(kind=dense|sparse|hybrid)`, EnsembleRetriever
 RRF fusion) and compared dense / sparse / hybrid_50_50 / hybrid_40_60 across the 7
@@ -445,7 +445,7 @@ promoting hybrid on this corpus.
 
 ### The Bombadil thesis was falsified
 
-The day's central hypothesis ("dense routes 'Tom Bombadil' to the generic Middle-earth
+The central hypothesis ("dense routes 'Tom Bombadil' to the generic Middle-earth
 peoples article; BM25 sees 'Bombadil' as a rare token and rescues it; hybrid fixes it")
 was **wrong**. No retriever — including pure BM25, which should trivially match the
 literal token "Bombadil" — surfaces a "Tom Bombadil" article, because **the corpus does
@@ -497,6 +497,6 @@ it is neutral at best and regresses two queries at 40/60. Dense stays the defaul
 one genuine candidate-set-miss (Bombadil) is a corpus gap, addressable only by expanding
 the corpus, not by retrieval tuning.
 
-**Deferred:** the Day 4 agent-probe re-run — the change kept dense as the live default,
-so agent behavior is unchanged from Day 4 and a re-run is not strictly required; will run
+**Deferred:** the agent-probe re-run — the change kept dense as the live default,
+so agent behavior is unchanged and a re-run is not strictly required; will run
 it if/when convenient with Anthropic credits to confirm.

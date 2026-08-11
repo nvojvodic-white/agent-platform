@@ -1,5 +1,5 @@
 {
-  "description": "Multi-turn smoke probes for the routing agent + memory store + coref node. Run with `python -m app.rag.eval.run_multiturn_probes` against /agent_query_stream_v2. expected_resolved_question is the hypothesis the coref node should land on; the runner does not assert equality (handwritten Day-14 smoke set, not ground truth).",
+  "description": "Multi-turn smoke probes for the routing agent + memory store + coref node. Run with `python -m app.rag.eval.run_multiturn_probes` against /agent_query_stream_v2. expected_resolved_question is the hypothesis the coref node should land on; the runner does not assert equality (handwritten smoke set, not ground truth).",
   "sequences": [
     {
       "name": "smaug-pronoun-chain",
