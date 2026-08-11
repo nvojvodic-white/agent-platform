@@ -125,6 +125,48 @@ def port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
+def port_owner(port: int) -> str:
+    """Best-effort 'pid 1234 (python.exe)' for whatever holds the port.
+
+    A previous run that was killed at the wrapper rather than with Ctrl+C
+    leaves its children behind, so this is the common case in practice - name
+    the offender instead of making the user go hunting.
+    """
+    try:
+        if IS_WINDOWS:
+            out = subprocess.run(
+                ["netstat", "-ano", "-p", "TCP"],
+                capture_output=True, text=True, timeout=15,
+            ).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[3] == "LISTENING" and parts[1].endswith(f":{port}"):
+                    pid = parts[4]
+                    name = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                        capture_output=True, text=True, timeout=15,
+                    ).stdout.split(",")[0].strip('" \n')
+                    return f"pid {pid} ({name})"
+        else:
+            pid = subprocess.run(
+                ["lsof", "-ti", f":{port}", "-sTCP:LISTEN"],
+                capture_output=True, text=True, timeout=15,
+            ).stdout.split()
+            if pid:
+                return f"pid {pid[0]}"
+    except (OSError, subprocess.SubprocessError, IndexError):
+        pass
+    return "unknown process"
+
+
+def kill_hint(port: int) -> str:
+    return (
+        f'taskkill /F /PID <pid>   (find it: netstat -ano | findstr :{port})'
+        if IS_WINDOWS
+        else f"kill $(lsof -ti:{port} -sTCP:LISTEN)"
+    )
+
+
 def wait_for(url: str, timeout: int, proc: subprocess.Popen) -> bool:
     """Poll url until it answers, giving up if the process dies first."""
     deadline = time.time() + timeout
@@ -228,61 +270,77 @@ def confirm(question: str, assume_yes: bool) -> bool:
 
 
 def preflight(want_ui: bool) -> list:
-    """Return a list of blocking problems; empty means good to go."""
+    """Return [(code, message)] for each blocking problem; empty means good.
+
+    Codes let the caller reason about *which* check failed - a missing index is
+    recoverable via setup(), a busy port is not.
+    """
     problems = []
     py = venv_python()
 
     if not py.exists():
-        problems.append(
+        problems.append((
+            "venv",
             f"No venv at {rel(py)}.\n"
             f"  Create it:  uv venv venv --python 3.11\n"
-            f"              uv pip install --python {rel(py)} -r requirements.txt"
-        )
+            f"              uv pip install --python {rel(py)} -r requirements.txt",
+        ))
     else:
         probe = subprocess.run(
             [str(py), "-c", "import fastapi, anthropic, chromadb, langchain"],
             capture_output=True,
         )
         if probe.returncode != 0:
-            problems.append(
+            problems.append((
+                "deps",
                 f"venv exists but dependencies are missing.\n"
-                f"  Fix:  uv pip install --python {rel(py)} -r requirements.txt"
-            )
+                f"  Fix:  uv pip install --python {rel(py)} -r requirements.txt",
+            ))
 
     env = read_env_file()
     if not env:
-        problems.append("No .env. Copy .env.example to .env and fill in your keys.")
+        problems.append(
+            ("env", "No .env. Copy .env.example to .env and fill in your keys.")
+        )
     else:
         for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
             value = env.get(key, "")
             if not value or value.startswith("your_"):
-                problems.append(f"{key} is not set in .env (needed for the RAG path).")
+                problems.append(
+                    ("env", f"{key} is not set in .env (needed for the RAG path).")
+                )
 
     if not REQUIRED_INDEX.exists():
-        problems.append(
+        problems.append((
+            "index",
             f"Missing dense index at {rel(REQUIRED_INDEX)}."
-            + BUILD_HINT.format(py=rel(py))
-        )
+            + BUILD_HINT.format(py=rel(py)),
+        ))
 
     for port in [API_PORT] + ([UI_PORT] if want_ui else []):
         if port_in_use(port):
-            problems.append(
-                f"Port {port} is already in use - stop whatever is on it first."
-            )
+            problems.append((
+                "port",
+                f"Port {port} is in use by {port_owner(port)}.\n"
+                f"  Free it:  {kill_hint(port)}",
+            ))
 
     if want_ui:
         if not shutil.which("node"):
-            problems.append("node not found. Install Node 20.19+ (or 22.12+).")
+            problems.append(
+                ("node", "node not found. Install Node 20.19+ (or 22.12+).")
+            )
         else:
             raw = subprocess.run(
                 ["node", "--version"], capture_output=True, text=True
             ).stdout.strip()
             major = int(raw.lstrip("v").split(".")[0])
             if major < 20:
-                problems.append(
+                problems.append((
+                    "node",
                     f"Node {raw} is too old - Vite needs 20.19+ or 22.12+. "
-                    f"Use --no-ui to run the API alone."
-                )
+                    f"Use --no-ui to run the API alone.",
+                ))
 
     return problems
 
@@ -341,29 +399,27 @@ def main() -> int:
 
     print("agent-platform demo\n" + "=" * 60)
 
-    if args.setup and not args.check:
-        # Setup needs the venv and keys, but not the index it is about to build.
-        blockers = [p for p in preflight(want_ui) if "index" not in p]
-        if blockers:
-            print("\nCannot set up yet:\n")
-            for p in blockers:
-                print(f"  - {p}\n")
-            return 1
-        if not setup(args.yes):
-            return 1
-
     problems = preflight(want_ui)
-    # A missing index is recoverable: offer to fix it rather than just refusing.
-    if problems and not args.check and not args.setup:
-        if any("index" in p for p in problems) and len(problems) == 1:
-            print("\n  The dense index is missing.")
-            if setup(args.yes):
-                problems = preflight(want_ui)
+
+    # A missing index is recoverable, so offer to build it whenever setup's own
+    # prerequisites hold. Unrelated failures (a busy port) still block the
+    # start, but should not stop the slow, expensive step from being done now.
+    setup_blockers = {"venv", "deps", "env"}
+    wants_setup = args.setup or any(code == "index" for code, _ in problems)
+    if wants_setup and not args.check:
+        blocked = [m for code, m in problems if code in setup_blockers]
+        if blocked:
+            print("\nCannot set up yet:\n")
+            for m in blocked:
+                print(f"  - {m}\n")
+            return 1
+        if setup(args.yes):
+            problems = preflight(want_ui)
 
     if problems:
         print("\nCannot start:\n")
-        for p in problems:
-            print(f"  - {p}\n")
+        for _, m in problems:
+            print(f"  - {m}\n")
         return 1
 
     for w in warnings():
