@@ -36,7 +36,9 @@ pydantic==2.13.1
 pydantic_core==2.46.1
 python-dotenv==1.2.2
 sniffio==1.3.1
-starlette==1.0.0
+# 1.0.0 carried CVE-2026-48818 (SSRF via UNC paths in StaticFiles) and
+# CVE-2026-54283 (form() limits ignored -> DoS). fastapi only needs >=0.46.0.
+starlette==1.6.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 uvicorn==0.44.0
