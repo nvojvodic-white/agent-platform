@@ -1,7 +1,7 @@
 # Deployment
 
 The deploy decision for this project, written out rather than executed. This
-doc is the honest version of the "Path B" Day-12 close-out: the system can run
+doc is the honest version of the "Path B" close-out: the system can run
 on EKS, the work to get it there is bounded and known, and that work is not
 where the portfolio value of the RAG project sits (it sits in
 [`app/rag/eval/findings.md`](app/rag/eval/findings.md) and the measured
@@ -10,8 +10,8 @@ EKS/Karpenter/Argo CD work lives.
 
 ## Architecture as it stands
 
-The system has four services on the happy path. Most of the wiring was already
-in place by Day 4:
+The system has four services on the happy path. Most of the wiring predates the
+RAG service:
 
 ```
 React frontend (frontend/)
@@ -20,7 +20,7 @@ React frontend (frontend/)
    v
 agent-api  (FastAPI, Python agent runner in app/agent/runner.py)
    |
-   | tool dispatch: search_middle_earth (Day 4)
+   | tool dispatch: search_middle_earth
    | HTTP via RAG_SERVICE_URL
    v
 RAG service (FastAPI, LangGraph routing agent in app/rag/agent/graph.py)
@@ -123,14 +123,14 @@ deployment sets `AGENT_API_URL=http://agent:8000`. The frontend ingress is the
 only manifest with a public hostname.
 
 Note: the chart currently in `charts/agent-platform/` ships templates for the
-agent service (the pre-RAG portfolio shape, from Day 0). Splitting it into
+agent service (the pre-RAG portfolio shape). Splitting it into
 agent + rag + frontend per the structure above is the real Path-A work item.
 
 ## What's true today vs what's needed for Path A
 
 | piece | state today | gap to ship on EKS |
 |---|---|---|
-| RAG application code | done (Days 1-11) | none |
+| RAG application code | done | none |
 | Dockerfile builds the RAG service | yes, same `app.main:app` entrypoint hosts both `/api/v1/sessions` and `/api/v1/rag/*` | the current single-image approach co-locates the agent and RAG; splitting into two images is the cleaner Path-A move |
 | Helm chart | exists for the agent (`charts/agent-platform/`) | split into agent / rag / frontend subcharts per the shape above |
 | `OPENAI_API_KEY` in secret + env | not in the chart | one-line template + values.yaml addition |
@@ -152,7 +152,7 @@ The application is done. The deploy work is bounded:
   that work would duplicate skills already demonstrated in `dev-platform`.
 
 Path B (this document) is the close-out for the RAG project specifically: the
-portfolio value of the twelve-day measured-iteration arc lives in
+portfolio value of the measured-iteration arc lives in
 [`findings.md`](app/rag/eval/findings.md), the [README](README.md), the
 [scorecard template](app/rag/eval/scorecard.md), and the
 [routing agent](app/rag/agent/graph.py). The deploy is a real next step but
