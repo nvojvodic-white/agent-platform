@@ -1,4 +1,13 @@
-.PHONY: rag-rebuild rag-probes eval-one eval-all eval-compare
+.PHONY: demo demo-check rag-rebuild rag-probes eval-one eval-all eval-compare
+
+# Bring up the whole local stack (API + RAG + UI). Handles venv creation,
+# dependency install, and preflight; see scripts/demo.py.
+demo:
+	./demo.sh
+
+# Preflight only — reports missing venv / keys / indices and starts nothing.
+demo-check:
+	./demo.sh --check
 
 # Run the RAGAS eval for one retriever, n-runs averaged.
 # Override on the command line, e.g.: make eval-one RETRIEVER=hyde N_RUNS=3

@@ -7,6 +7,36 @@ A self-hosted Claude-powered platform with two halves that share one FastAPI ser
 
 The RAG service is exposed alongside the agent on the same API: `POST /api/v1/rag/query` (single retriever) and `POST /api/v1/rag/agent_query` (routing agent).
 
+## Run it
+
+One command. Creates the venv, installs dependencies, preflights your `.env` and
+indices, then starts the API and the React UI and opens the browser. Ctrl+C stops both.
+
+```powershell
+.\demo.ps1          # Windows
+```
+```bash
+./demo.sh           # macOS / Linux
+```
+
+Useful flags: `--check` (preflight only, starts nothing), `--no-ui` (API only).
+
+Prerequisites: Python 3.11+ (or [uv](https://astral.sh/uv)), Node 20.19+, and a
+`.env` with `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` (copy `.env.example`).
+
+The Chroma indices are gitignored (~520 MB), so a fresh clone has to build them
+once. `demo.ps1 --check` prints the exact commands. Two routes:
+
+| Starting from | Commands | Time | OpenAI cost |
+|---|---|---|---|
+| A `data/raw` archive (3.9 MB zipped) | `build_index` | ~5 min | ~$0.04 |
+| Nothing | `fetch` then `build_index` | ~45 min | ~$0.04 |
+
+The scrape dominates — 2,296 articles at a 1 s/request delay — and the embed is
+the cheap part. `build_index` reads `data/raw/`, so the two steps are
+independent: keeping a copy of `data/raw` turns a 45-minute rebuild into a
+5-minute one.
+
 ## Architecture
 
 ![Agent Platform Architecture](docs/Agent%20Architecture.png)
@@ -193,6 +223,9 @@ Each `eval-one` writes a per-run-averaged CSV to `app/rag/eval/ragas_results/` a
 - **Live EKS deployment.** The Helm chart + Dockerfile are in place and the four-service architecture (frontend, agent, RAG, Chroma) is wired in code; cluster provisioning itself lives in the companion `dev-platform` repo. The deploy story (what changes on EKS, the four real gaps, the chart shape, the bake-vs-PVC-vs-hosted Chroma tradeoff, the bounded scope of a weekend-vs-full-week deploy) is written out in [`DEPLOYMENT.md`](DEPLOYMENT.md) rather than executed here.
 
 ### Quickstart
+
+The manual equivalent of [`./demo.sh`](demo.sh) — useful when you want to run the
+steps individually rather than have the script orchestrate them.
 
 ```bash
 # install

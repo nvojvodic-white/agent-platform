@@ -1,0 +1,5 @@
+# Shell scripts must keep LF endings even when checked out on Windows
+# (core.autocrlf=true would otherwise rewrite the shebang to "#!/usr/bin/env bash\r",
+# which bash rejects with "bad interpreter").
+*.sh text eol=lf
+deploy.sh text eol=lf
