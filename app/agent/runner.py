@@ -50,8 +50,11 @@ def run_agent(session: AgentSession) -> AgentSession:
             while True:
                 with tracer.start_as_current_span("agent.llm_call") as llm_span:
                     response = client.messages.create(
-                        model="claude-sonnet-4-20250514",
-                        max_tokens=4096,
+                        model="claude-sonnet-5",
+                        # Sonnet 5 thinks by default, and max_tokens covers
+                        # thinking plus the reply, so the old 4096 could
+                        # truncate mid-answer in a tool loop.
+                        max_tokens=8192,
                         system=SYSTEM_PROMPT,
                         tools=TOOLS,
                         messages=messages
