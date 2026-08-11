@@ -24,9 +24,15 @@ export function useSessions() {
   }, [])
 
   useEffect(() => {
-    fetch()
+    // Schedule the first poll instead of calling fetch() inline: the state
+    // update then comes from a timer callback, and unmounting cancels the
+    // initial request the same way it cancels the interval.
+    const first = setTimeout(fetch, 0)
     const id = setInterval(fetch, POLL_MS)
-    return () => clearInterval(id)
+    return () => {
+      clearTimeout(first)
+      clearInterval(id)
+    }
   }, [fetch])
 
   return { sessions, loading, error, refresh: fetch }

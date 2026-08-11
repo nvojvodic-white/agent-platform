@@ -50,7 +50,6 @@ from ragas.metrics import (
 from ragas.run_config import RunConfig
 
 from app.rag.chain.rag_chain import build_chain
-from app.rag.retrieval.vectorstore import get_retriever
 
 load_dotenv()
 

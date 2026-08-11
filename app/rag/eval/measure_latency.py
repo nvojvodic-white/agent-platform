@@ -11,7 +11,6 @@ Override AGENT_DEBUG_URL to point at a non-default port:
 import json
 import os
 import re
-import statistics
 from collections import defaultdict
 from pathlib import Path
 
@@ -72,7 +71,7 @@ def per_node_per_route(rows: list[dict]) -> None:
         for node in ("classify", "retrieve", "grade", "synthesize"):
             if node in r:
                 by_route_node[(r["route"], node)].append(r[node])
-    print(f"\n=== per-node-per-route (mean ms, n=samples) ===")
+    print("\n=== per-node-per-route (mean ms, n=samples) ===")
     print(f"{'route':<14} {'node':<12} {'mean':>7} {'p50':>7} {'p90':>7} {'n':>3}")
     for (route, node), vals in sorted(by_route_node.items()):
         vals_sorted = sorted(vals)
