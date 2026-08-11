@@ -13,13 +13,26 @@ One command. Creates the venv, installs dependencies, preflights your `.env` and
 indices, then starts the API and the React UI and opens the browser. Ctrl+C stops both.
 
 ```powershell
-.\demo.ps1          # Windows
+.\demo.cmd          # Windows
 ```
 ```bash
 ./demo.sh           # macOS / Linux
 ```
 
-Useful flags: `--check` (preflight only, starts nothing), `--no-ui` (API only).
+Useful flags — PowerShell style on Windows, POSIX style via `demo.sh`:
+
+| Windows | macOS / Linux | Effect |
+|---|---|---|
+| `-Check` | `--check` | preflight only, start nothing |
+| `-Setup` | `--setup` | fetch the corpus and build the indices, then start |
+| `-NoUi` | `--no-ui` | API only, no frontend |
+| `-Yes` | `--yes` | answer yes to setup prompts (non-interactive) |
+
+`demo.cmd` is a thin wrapper around `demo.ps1`. Call the `.ps1` directly if you
+prefer, but PowerShell blocks unsigned scripts under the `Restricted` execution
+policy — and under `RemoteSigned` too if you downloaded the repo as a ZIP rather
+than cloning it. The wrapper sidesteps both for that one invocation without
+changing any machine setting.
 
 Prerequisites: Python 3.11+ (or [uv](https://astral.sh/uv)), Node 20.19+, and a
 `.env` with `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` (copy `.env.example`).

@@ -3,3 +3,6 @@
 # which bash rejects with "bad interpreter").
 *.sh text eol=lf
 deploy.sh text eol=lf
+
+# Batch files are parsed line-by-line by cmd.exe and want CRLF
+*.cmd text eol=crlf
