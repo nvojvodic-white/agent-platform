@@ -285,7 +285,12 @@ def setup(assume_yes: bool) -> bool:
             [str(py), "-m", f"app.rag.ingestion.{module}"], cwd=str(ROOT)
         ).returncode
         if rc != 0:
-            print(f"\n  {module} failed - check the OpenAI key and the output above.")
+            print(
+                f"\n  {module} failed. If the traceback above ends in\n"
+                f"  APIConnectionError or an SSL error, this machine cannot reach\n"
+                f"  api.openai.com - typically an intercepting proxy rather than a\n"
+                f"  bad key. Otherwise check OPENAI_API_KEY in .env."
+            )
             return False
         print(f"\n  {label} index built at {rel(path)} ({index_docs(path):,} chunks)")
     return True
@@ -303,6 +308,37 @@ def confirm(question: str, assume_yes: bool) -> bool:
     except (EOFError, KeyboardInterrupt):
         print()
         return False
+
+
+def check_api(name: str, url: str, headers: dict) -> str:
+    """Empty string if the API is reachable and the key works; else why not.
+
+    Worth a second here: without this, a machine that cannot reach the provider
+    only finds out after chunking - five minutes for dense, nineteen for
+    semantic - and the traceback that surfaces is a TLS error buried under a
+    dozen frames of httpx internals.
+    """
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return ""
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return f"{name} rejected the key in .env (HTTP {e.code})."
+        return ""  # reachable; any other status still proves connectivity
+    except urllib.error.URLError as e:
+        reason = getattr(e, "reason", e)
+        hint = ""
+        if "SSL" in str(reason) or "CERTIFICATE" in str(reason).upper():
+            hint = (
+                "\n  A TLS handshake that dies mid-negotiation usually means an\n"
+                "  intercepting proxy. Corporate networks often allow github.com\n"
+                "  while blocking AI provider APIs. Try a personal network, or set\n"
+                "  HTTPS_PROXY and point SSL_CERT_FILE at your corporate CA bundle."
+            )
+        return f"Cannot reach {name} ({reason}).{hint}"
+    except OSError as e:
+        return f"Cannot reach {name} ({e})."
 
 
 def preflight(want_ui: bool) -> list:
@@ -345,6 +381,21 @@ def preflight(want_ui: bool) -> list:
                 problems.append(
                     ("env", f"{key} is not set in .env (needed for the RAG path).")
                 )
+
+        # Both providers are needed on every query - OpenAI embeds the question,
+        # Claude synthesises the answer - so prebuilt indices do not rescue a
+        # machine that cannot reach them.
+        if not any(code == "env" for code, _ in problems):
+            for name, url, headers in (
+                ("OpenAI", "https://api.openai.com/v1/models",
+                 {"Authorization": f"Bearer {env['OPENAI_API_KEY']}"}),
+                ("Anthropic", "https://api.anthropic.com/v1/models",
+                 {"x-api-key": env["ANTHROPIC_API_KEY"],
+                  "anthropic-version": "2023-06-01"}),
+            ):
+                msg = check_api(name, url, headers)
+                if msg:
+                    problems.append(("api", msg))
 
     empty = [(p, label) for p, _, label in REQUIRED_INDICES if not index_docs(p)]
     if empty:
@@ -443,7 +494,7 @@ def main() -> int:
     # A missing index is recoverable, so offer to build it whenever setup's own
     # prerequisites hold. Unrelated failures (a busy port) still block the
     # start, but should not stop the slow, expensive step from being done now.
-    setup_blockers = {"venv", "deps", "env"}
+    setup_blockers = {"venv", "deps", "env", "api"}
     wants_setup = args.setup or any(code == "index" for code, _ in problems)
     if wants_setup and not args.check:
         blocked = [m for code, m in problems if code in setup_blockers]
