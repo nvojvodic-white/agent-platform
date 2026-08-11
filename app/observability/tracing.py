@@ -15,9 +15,15 @@ def setup_tracing():
 
     provider = TracerProvider(resource=resource)
 
-    otlp_endpoint = os.getenv("OTLP_ENDPOINT", "http://jaeger:4317")
-    exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+    # Export only when a collector is configured. docker-compose and all three
+    # Helm values files set OTLP_ENDPOINT explicitly, so the old "jaeger:4317"
+    # default only ever applied to local runs - where that hostname does not
+    # resolve, and the exporter retries noisily for the life of the process.
+    # Spans are still recorded either way; they are just not shipped anywhere.
+    otlp_endpoint = os.getenv("OTLP_ENDPOINT")
+    if otlp_endpoint:
+        exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+        provider.add_span_processor(BatchSpanProcessor(exporter))
 
     trace.set_tracer_provider(provider)
 

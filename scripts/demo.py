@@ -33,11 +33,17 @@ IS_WINDOWS = platform.system() == "Windows"
 API_PORT = 8000  # not configurable: frontend/vite.config.ts proxies to it
 UI_PORT = 5173
 
-# Dense is the default retriever, so the demo is not meaningful without it.
-# The other two only matter once the routing agent picks semantic / pdr.
 RAW_DIR = ROOT / "data" / "raw"
-REQUIRED_INDEX = ROOT / "data" / "chroma_middle_earth"
-OPTIONAL_INDICES = [ROOT / "data" / "chroma_semantic", ROOT / "data" / "chroma_pdr"]
+
+# The routing agent sends definitional questions ("who is X") to semantic and
+# everything else to dense/hyde, which both read the dense index - so both are
+# needed before the demo answers the most obvious first question. pdr is a
+# standalone kind the router never selects, so it stays optional.
+REQUIRED_INDICES = [
+    (ROOT / "data" / "chroma_middle_earth", "build_index", "dense"),
+    (ROOT / "data" / "chroma_semantic", "build_semantic_index", "semantic"),
+]
+OPTIONAL_INDICES = [ROOT / "data" / "chroma_pdr"]
 
 # The scraped corpus is published as a release asset rather than committed:
 # it is 2,296 verbatim wiki articles, so keeping it out of git history leaves
@@ -74,6 +80,28 @@ BUILD_HINT = """
 
 def venv_python() -> Path:
     return ROOT / "venv" / ("Scripts/python.exe" if IS_WINDOWS else "bin/python")
+
+
+def index_docs(path: Path) -> int:
+    """Document count in a Chroma index; 0 if absent, unreadable, or empty.
+
+    Existence is not enough: langchain-chroma creates an empty collection when
+    it opens a directory that is not there, so a missing index looks present
+    and silently retrieves nothing. Count instead.
+    """
+    if not path.exists():
+        return 0
+    try:
+        import chromadb
+
+        client = chromadb.PersistentClient(path=str(path))
+        cols = client.list_collections()
+        if not cols:
+            return 0
+        name = cols[0] if isinstance(cols[0], str) else cols[0].name
+        return client.get_collection(name).count()
+    except Exception:
+        return 0
 
 
 def corpus_url() -> str:
@@ -233,25 +261,33 @@ def setup(assume_yes: bool) -> bool:
     else:
         print(f"  corpus already present ({rel(RAW_DIR)})")
 
-    if REQUIRED_INDEX.exists():
-        print("  dense index already built")
+    missing = [(p, mod, label) for p, mod, label in REQUIRED_INDICES if not index_docs(p)]
+    for path, _, label in REQUIRED_INDICES:
+        n = index_docs(path)
+        if n:
+            print(f"  {label} index already built ({n:,} chunks)")
+
+    if not missing:
         return True
 
+    labels = " and ".join(label for _, _, label in missing)
     print(
-        "\n  Building the dense index embeds ~2.1M tokens with OpenAI\n"
-        "  text-embedding-3-small: roughly 5 minutes and about $0.04."
+        f"\n  Building the {labels} index{'es' if len(missing) > 1 else ''} embeds\n"
+        f"  with OpenAI text-embedding-3-small: roughly {5 * len(missing)} minutes\n"
+        f"  and about ${0.05 * len(missing):.2f} total."
     )
-    if not confirm("  Build it now?", assume_yes):
+    if not confirm("  Build now?", assume_yes):
         return False
 
-    print("  embedding (progress below)...\n")
-    rc = subprocess.run(
-        [str(py), "-m", "app.rag.ingestion.build_index"], cwd=str(ROOT)
-    ).returncode
-    if rc != 0:
-        print("\n  build_index failed - check the OpenAI key and the output above.")
-        return False
-    print(f"\n  index built at {rel(REQUIRED_INDEX)}")
+    for path, module, label in missing:
+        print(f"\n  building {label} index (progress below)...\n")
+        rc = subprocess.run(
+            [str(py), "-m", f"app.rag.ingestion.{module}"], cwd=str(ROOT)
+        ).returncode
+        if rc != 0:
+            print(f"\n  {module} failed - check the OpenAI key and the output above.")
+            return False
+        print(f"\n  {label} index built at {rel(path)} ({index_docs(path):,} chunks)")
     return True
 
 
@@ -310,10 +346,13 @@ def preflight(want_ui: bool) -> list:
                     ("env", f"{key} is not set in .env (needed for the RAG path).")
                 )
 
-    if not REQUIRED_INDEX.exists():
+    empty = [(p, label) for p, _, label in REQUIRED_INDICES if not index_docs(p)]
+    if empty:
+        detail = ", ".join(f"{label} ({rel(p)})" for p, label in empty)
         problems.append((
             "index",
-            f"Missing dense index at {rel(REQUIRED_INDEX)}."
+            f"No documents in the {detail} index"
+            f"{'es' if len(empty) > 1 else ''}."
             + BUILD_HINT.format(py=rel(py)),
         ))
 
@@ -347,11 +386,11 @@ def preflight(want_ui: bool) -> list:
 
 def warnings() -> list:
     out = []
-    missing = [p.name for p in OPTIONAL_INDICES if not p.exists()]
+    missing = [p.name for p in OPTIONAL_INDICES if not index_docs(p)]
     if missing:
         out.append(
-            f"Optional indices absent ({', '.join(missing)}): the routing agent "
-            f"still answers, but routes that select them return nothing."
+            f"Optional index absent ({', '.join(missing)}): only reachable via an "
+            f"explicit kind=pdr request, never by the router. Safe to skip."
         )
     return out
 
